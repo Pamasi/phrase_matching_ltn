@@ -1,0 +1,9 @@
+torch 
+torchvision 
+torchaudio
+transformers
+pandas
+LTNtorch
+ipykernel
+matplotlib
+seaborn
