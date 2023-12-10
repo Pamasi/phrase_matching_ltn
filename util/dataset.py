@@ -1,8 +1,9 @@
 import torch
+import torch.nn.functional as F
 import pandas as pd
-import transformers
 import torch
-from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
+from typing import Tuple
+from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
 
 
@@ -13,10 +14,18 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int):
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda'):
+        """ create a PatentDataset object
+
+        Args:
+            path (str): path of the dataset
+            tokenizer (DistilBertTokenizerFast): tokenizer
+            max_len (int): max lenght of a sentence
+        """
         self.tokenizer = tokenizer
         self.max_len = max_len
-        
+        self.device = device
+        self.level_score = 5
      
         raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
         self._process(raw_data)
@@ -33,11 +42,35 @@ class PatentDataset(Dataset):
         
         
     def __len__(self):
-        return len(self.text)
+        return self.data.shape[0]
     
 
+    def _convert_score(self,score:float)->torch.Tensor:
+        
+        cls = torch.zeros((self.level_score), )
+        match score:
+            case 0.0:
+                idx = 0
+                
+            case 0.25:
+                idx = 1    
+            
+            case 0.5:
+                idx = 2
+                 
+            case 0.75:
+                idx = 3
+            
+            case _:
+                idx = 4
+
+        
+        cls[idx]=1.0
+        return cls 
+                
     def __getitem__(self, index):
         
+        score  =  self._convert_score(self.data['score'][index].astype(float))
         anchor_text = self.data['anchor_context'][index]
         anchor_text = " ".join(anchor_text.split())
         
@@ -47,36 +80,64 @@ class PatentDataset(Dataset):
 
         anchor = self.tokenizer.encode_plus(
             anchor_text,
-            None,
-            add_special_tokens=True,
             max_length=self.max_len,
-            pad_to_max_length=True,
-            return_token_type_ids=True
-        )        
+            add_special_tokens=True, 
+            truncation=True, 
+            padding='max_length', return_tensors="pt"
+        )      
         
-        target = self.tokenizer.encode_plus(
+        target = self.tokenizer(
             target_text,
-            None,
-            add_special_tokens=True,
             max_length=self.max_len,
-            pad_to_max_length=True,
-            return_token_type_ids=True
+            add_special_tokens=True, 
+            truncation=True, 
+            padding='max_length', return_tensors="pt"
         )
-        
-
         anchor_data= {
-            'ids': torch.tensor(anchor['input_ids'], dtype=torch.long),
-            'mask': torch.tensor(anchor['attention_mask'], dtype=torch.long),
-            'token_type_id': torch.tensor(anchor['token_type_ids'], dtype=torch.long)
+            'ids': anchor['input_ids'],
+            'mask':anchor['attention_mask'] 
         }
         target_data= {
-            'ids': torch.tensor(anchor['input_ids'], dtype=torch.long),
-            'mask': torch.tensor(anchor['attention_mask'], dtype=torch.long),
-            'token_type_id': torch.tensor(anchor['token_type_ids'], dtype=torch.long)
+            'ids':target['input_ids'],
+            'mask':target['attention_mask']
         }
+
 
         return {
             'anchor': anchor_data,
             'target': target_data,
-            'score': torch.tensor(self.data.iloc[index, 'score'].astype(float), dtype=torch.float)
+            'score': score
         }
+        
+class PatentCollator(object):
+    def __init__(self, device):
+        self.device = device
+        
+    def __call__(self, batch)->Tuple[torch.Tensor]:
+        """ collate batch to effiency purposes
+
+        Args:
+            batch (_type_): batch of element
+
+        Returns:
+            Tuple[torch.tensor]: optimized batch
+        """
+        anchor_ids = torch.hstack([ b['anchor']['ids'] for b in batch ]).to(self.device)
+        anchor_mask = torch.hstack([ b['anchor']['mask'] for b in batch ]).to(self.device)
+        
+        anchors = {'ids': anchor_ids, 'mask': anchor_mask}
+        
+        target_ids = torch.hstack([ b['target']['ids'] for b in batch ]).to(self.device)
+        target_mask = torch.hstack([ b['target']['mask'] for b in batch ]).to(self.device)
+
+        
+        targets = {'ids': target_ids, 'mask': target_mask}
+        
+        scores =  torch.hstack([ b['score'] for b in batch ]).to(self.device)
+        
+
+        return (anchors, targets, scores)
+
+
+    
+    
