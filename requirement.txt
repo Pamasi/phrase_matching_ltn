@@ -7,3 +7,5 @@ LTNtorch
 ipykernel
 matplotlib
 seaborn
+wandb
+tqdm
