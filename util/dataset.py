@@ -122,18 +122,18 @@ class PatentCollator(object):
         Returns:
             Tuple[torch.tensor]: optimized batch
         """
-        anchor_ids = torch.hstack([ b['anchor']['ids'] for b in batch ]).to(self.device)
-        anchor_mask = torch.hstack([ b['anchor']['mask'] for b in batch ]).to(self.device)
+        anchor_ids = torch.vstack([ b['anchor']['ids'] for b in batch ]).to(self.device)
+        anchor_mask = torch.vstack([ b['anchor']['mask'] for b in batch ]).to(self.device)
         
         anchors = {'ids': anchor_ids, 'mask': anchor_mask}
         
-        target_ids = torch.hstack([ b['target']['ids'] for b in batch ]).to(self.device)
-        target_mask = torch.hstack([ b['target']['mask'] for b in batch ]).to(self.device)
+        target_ids = torch.vstack([ b['target']['ids'] for b in batch ]).to(self.device)
+        target_mask = torch.vstack([ b['target']['mask'] for b in batch ]).to(self.device)
 
         
         targets = {'ids': target_ids, 'mask': target_mask}
         
-        scores =  torch.hstack([ b['score'] for b in batch ]).to(self.device)
+        scores =  torch.vstack([ b['score'] for b in batch ]).to(self.device)
         
 
         return (anchors, targets, scores)
