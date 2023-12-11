@@ -32,13 +32,13 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
 
     criterion_cl = torch.nn.TripletMarginLoss(margin=1.0, p=2, eps=1e-7)
-    criterion_ce = torch.nn.CrossEntropyLoss()
+    criterion_ce = torch.nn.BCEWithLogitsLoss()
     
     # reproducibility
     torch.manual_seed(args.seed)
     
     model.train()
-    
+
     for epoch in trange(args.n_epoch):
         # step
         step(train_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce)
@@ -46,22 +46,23 @@ def main(args):
 
 
 def step(data_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce):
-    for anchors, targets, scores in data_loader:
+   
+    for anchors, targets, target_scores in data_loader:
         (latent1, latent2, out_scores) = model(anchors, targets)
 
         optimizer.zero_grad()
         
-        loss_score = criterion_ce(scores, out_scores)
+        loss_score = criterion_ce(target_scores, out_scores)
         
         # contrastive learning
         # for all equal anchors id
         # set as positive the target which have score>0
         # set as negative the targer which have score==0
         
-        idx_anchor = torch.tensor([ [ 1 if a_i==a_j else 0 for a_j in  anchors['ids'] ] for a_i in anchors['ids']  ], dtype=torch.bool)
-        
-        pos_ex_idx =  torch.tensor([ 1 if scores[a_i]>0 else 0 for a_i in idx_anchor ], dtype=torch.bool)
-        neg_ex_idx =  torch.tensor([ 1 if scores[a_i]==0 else 0 for a_i in idx_anchor ], dtype=torch.bool)
+        idx_anchor = torch.tensor([ [  (a_j==a_i).all()  for a_i in anchors['ids'] ] for a_j in anchors['ids']  ], dtype=torch.bool)
+        label_score = torch.argmax(target_scores, dim=-1)
+        pos_ex_idx =  torch.tensor([ [ (label_score[a_i]!=0) ] for a_i in idx_anchor ], dtype=torch.bool)
+        neg_ex_idx =  torch.tensor([ [ (label_score[a_i]==0) ] for a_i in idx_anchor ], dtype=torch.bool)
         
     
         loss_emb = torch.sum( [ criterion_cl(latent1[a], latent2[p], latent2[n])   for a,p,n in zip(idx_anchor, pos_ex_idx, neg_ex_idx) ])
