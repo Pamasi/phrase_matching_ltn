@@ -5,7 +5,7 @@ import torch
 from typing import Tuple
 from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
-
+from transformers import AutoTokenizer, pipeline
 
 class PatentDataset(Dataset):
     """_summary_
@@ -14,19 +14,29 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda'):
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda', prior_decoder:str='meta-llama/Llama-2-7b-chat-hf'):
         """ create a PatentDataset object
 
         Args:
             path (str): path of the dataset
             tokenizer (DistilBertTokenizerFast): tokenizer
             max_len (int): max lenght of a sentence
+            prior_decoder (str): name of the decoder used as prior
         """
         self.tokenizer = tokenizer
         self.max_len = max_len
         self.device = device
         self.level_score = 5
      
+        # create the decoder that acts as prior knownledge
+        self.prior_tok = AutoTokenizer.from_pretrained(prior_decoder)
+        self.prior_pipeline = pipeline(
+            "text-generation",
+            model=prior_decoder,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+        
         raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
         self._process(raw_data)
         
@@ -93,6 +103,28 @@ class PatentDataset(Dataset):
             truncation=True, 
             padding='max_length', return_tensors="pt"
         )
+        
+        
+        # prompt 
+        prompt = f'Given the phrase \"{target_text}\" given a phrase which is similar, but unrelated'
+        unrelated_text =pipeline(
+            'I liked "Breaking Bad" and "Band of Brothers". Do you have any recommendations of other shows I might like?\n',
+            do_sample=True,
+            top_k=1,
+            num_return_sequences=1,
+            eos_token_id=self.prior_tok.eos_token_id,
+            max_length=self.max_len
+        )
+        
+        unrelated_text = " ".join(unrelated_text.split())       
+        
+        neg_example = self.tokenizer(
+            unrelated_text,
+            max_length=self.max_len,
+            add_special_tokens=True, 
+            truncation=True, 
+            padding='max_length', return_tensors="pt"
+        )       
         anchor_data= {
             'ids': anchor['input_ids'],
             'mask':anchor['attention_mask'] 
