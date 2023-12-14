@@ -59,13 +59,17 @@ def step(data_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce
         # set as positive the target which have score>0
         # set as negative the targer which have score==0
         
-        idx_anchor = torch.tensor([ [  (a_j==a_i).all()  for a_i in anchors['ids'] ] for a_j in anchors['ids']  ], dtype=torch.bool)
+        anchor_idx = torch.tensor([ [  (a_j==a_i).all()  for a_i in anchors['ids'] ] for a_j in anchors['ids']  ], dtype=torch.bool, device=target_scores.device)
         label_score = torch.argmax(target_scores, dim=-1)
-        pos_ex_idx =  torch.tensor([ [ (label_score[a_i]!=0) ] for a_i in idx_anchor ], dtype=torch.bool)
-        neg_ex_idx =  torch.tensor([ [ (label_score[a_i]==0) ] for a_i in idx_anchor ], dtype=torch.bool)
+        pos_ex_idx =  torch.vstack([   torch.logical_and(label_score[i]>0, i)  for i in anchor_idx ])
+        neg_ex_idx =  ~pos_ex_idx 
+        
+        # sanity check to control whether vector is correctly constructed
+        assert torch.sum(pos_ex_idx[label_score==0,label_score==0])==0.0, 'check the implementation of target vectors'
+        
         
     
-        loss_emb = torch.sum( [ criterion_cl(latent1[a], latent2[p], latent2[n])   for a,p,n in zip(idx_anchor, pos_ex_idx, neg_ex_idx) ])
+        loss_emb = torch.sum( [ criterion_cl(latent1[a], latent2[p,:], latent2[n,:])   for a,p,n in zip(anchor_idx, pos_ex_idx, neg_ex_idx) ])
 
         loss = loss_emb + loss_score
         loss.backward()
