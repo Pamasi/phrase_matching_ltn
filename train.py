@@ -10,8 +10,8 @@ from tqdm import trange
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = False
 
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
 def main(args):
-    
     tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
     
     path_train =  os.path.join(os.getcwd(), args.path_train)
@@ -61,17 +61,28 @@ def step(data_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce
         
         anchor_idx = torch.tensor([ [  (a_j==a_i).all()  for a_i in anchors['ids'] ] for a_j in anchors['ids']  ], dtype=torch.bool, device=target_scores.device)
         label_score = torch.argmax(target_scores, dim=-1)
-        pos_ex_idx =  torch.vstack([   torch.logical_and(label_score[i]>0, i)  for i in anchor_idx ])
+
+        # set as positive the target which have score>0
+        pos_ex_idx =  torch.vstack([   torch.logical_and(label_score>0, i)  for i in anchor_idx ])
+        # set as negative the targer which have score==0
+        # TODO: create a smart way for negative example
         neg_ex_idx =  ~pos_ex_idx 
         
         # sanity check to control whether vector is correctly constructed
         assert torch.sum(pos_ex_idx[label_score==0,label_score==0])==0.0, 'check the implementation of target vectors'
         
         
-    
-        loss_emb = torch.sum( [ criterion_cl(latent1[a], latent2[p,:], latent2[n,:])   for a,p,n in zip(anchor_idx, pos_ex_idx, neg_ex_idx) ])
+        has_pos = False
+        loss_emb = 0.0
+        for i in range(anchor_idx.size(0)):
+            # check that there is a least a negative and positive example
+            if torch.sum(pos_ex_idx[i])>0:
+                loss_emb +=  criterion_cl(latent1[anchor_idx[i]], latent2[pos_ex_idx[i]], latent2[neg_ex_idx[i]])  
+                
+                has_pos= True
 
-        loss = loss_emb + loss_score
+        # TODO:investigate a smarter way to account for the lack of pos example
+        loss = loss_emb + loss_score if has_pos else loss_emb
         loss.backward()
         optimizer.step()
             
