@@ -1,6 +1,5 @@
 torch 
 torchvision 
-torchaudio
 transformers
 pandas
 LTNtorch
@@ -9,3 +8,5 @@ matplotlib
 seaborn
 wandb
 tqdm
+rapids
+accelerate
