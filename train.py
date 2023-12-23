@@ -1,17 +1,30 @@
-import argparse, os, tqdm
+import argparse, os
 import torch
-from transformers import DistilBertTokenizerFast
 from torch.utils.data import DataLoader
-from torch.nn import TripletMarginLoss, CrossEntropyLoss
+from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss
+from transformers import DistilBertTokenizerFast
+from tqdm import trange
+from typing import Tuple
+import wandb
+
+from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
+
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser
 from model.phrase_distil_bert import PhraseDistilBERT
-from tqdm import trange
+
+
+
 torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+# to enable reproducibility
 torch.backends.cudnn.benchmark = False
 
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
+
+#os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
 def main(args):
+ 
+
     tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
     
     path_train =  os.path.join(os.getcwd(), args.path_train)
@@ -26,27 +39,70 @@ def main(args):
     train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn)
     val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, num_workers=args.num_workers, collate_fn=collate_fn)
     
-    model = PhraseDistilBERT(args.score_level)
+    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora)
     model.to(args.device)
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
 
-    criterion_cl = torch.nn.TripletMarginLoss(margin=1.0, p=2, eps=1e-7)
-    criterion_ce = torch.nn.BCEWithLogitsLoss()
+    criterion_ce = BCEWithLogitsLoss()
     
+    criterion_sim = CosineEmbeddingLoss()
+
     # reproducibility
     torch.manual_seed(args.seed)
     
+    # configure metrics
+    metric_ap = MulticlassAveragePrecision(num_classes=args.score_level, average="macro", thresholds=None)
+    metric_acc = MulticlassAccuracy(num_classes=args.score_level, average="macro")
+    metric_ar = MulticlassRecall(num_classes=args.score_level, average='macro')
+
+
+
+    # configure wandb 
+    if args.no_track==False:
+        wandb.login()
+        run = wandb.init(project='phrase_matching', config=args)  
+
+
+
     model.train()
 
     for epoch in trange(args.n_epoch):
         # step
-        step(train_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce)
-        step(val_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce)
+        train_acc, train_ap, train_ar, train_loss, train_loss_score, train_loss_emb = step(train_loader, model, optimizer, 
+                                                                                           lr_scheduler, criterion_sim, 
+                                                                                           criterion_ce, metric_ap,  metric_ar, metric_acc)
+        val_acc, val_ap, val_ar, val_loss, val_loss_score, val_loss_emb = step(val_loader, model, optimizer, 
+                                                                              lr_scheduler, criterion_sim, 
+                                                                              criterion_ce, metric_ap,  metric_ar, metric_acc)
+        dict_log =  {
+                    "epoch": epoch,
+                    "train_acc": train_acc,
+                    "train_ap": train_ap,
+                    "train_ar": train_ar,
+                    "train_loss": train_loss,
+                    "train_loss_score": train_loss_score,
+                    "train_loss_emb": train_loss_emb,
+                    "val_acc": val_acc,
+                    "val_ap": val_ap,
+                    "val_ar": val_ar,
+                    "val_loss": val_loss,
+                    "val_loss_score": val_loss_score,
+                    "val_loss_emb":   val_loss_emb,
+                }
+        
+        if args.no_track==False:
+            wandb.log(dict_log )
 
+            run.log_code()
+        
+        else:
+            print(dict_log)
 
-def step(data_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce):
-   
+def step(data_loader, model, optimizer, lr_scheduler, criterion_sim, criterion_ce, metric_ap, metric_ar, metric_acc) -> Tuple[torch.Tensor]:
+
+    tgt_list = []
+    pred_list = []
     for anchors, targets, target_scores in data_loader:
         (latent1, latent2, out_scores) = model(anchors, targets)
 
@@ -54,40 +110,31 @@ def step(data_loader, model, optimizer, lr_scheduler, criterion_cl, criterion_ce
         
         loss_score = criterion_ce(target_scores, out_scores)
         
-        # contrastive learning
-        # for all equal anchors id
-        # set as positive the target which have score>0
-        # set as negative the targer which have score==0
-        
-        anchor_idx = torch.tensor([ [  (a_j==a_i).all()  for a_i in anchors['ids'] ] for a_j in anchors['ids']  ], dtype=torch.bool, device=target_scores.device)
-        label_score = torch.argmax(target_scores, dim=-1)
 
-        # set as positive the target which have score>0
-        pos_ex_idx =  torch.vstack([   torch.logical_and(label_score>0, i)  for i in anchor_idx ])
-        # set as negative the targer which have score==0
-        # TODO: create a smart way for negative example
-        neg_ex_idx =  ~pos_ex_idx 
-        
-        # sanity check to control whether vector is correctly constructed
-        assert torch.sum(pos_ex_idx[label_score==0,label_score==0])==0.0, 'check the implementation of target vectors'
-        
-        
-        has_pos = False
-        loss_emb = 0.0
-        for i in range(anchor_idx.size(0)):
-            # check that there is a least a negative and positive example
-            if torch.sum(pos_ex_idx[i])>0:
-                loss_emb +=  criterion_cl(latent1[anchor_idx[i]], latent2[pos_ex_idx[i]], latent2[neg_ex_idx[i]])  
-                
-                has_pos= True
+        label_type = torch.tensor([ 1 if torch.argmax(scores) <2 else  -1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
 
-        # TODO:investigate a smarter way to account for the lack of pos example
-        loss = loss_emb + loss_score if has_pos else loss_emb
+        loss_emb = criterion_sim(latent1, latent2, label_type)
+
+
+        loss = loss_score + loss_emb
         loss.backward()
         optimizer.step()
             
         lr_scheduler.step()
-    
+
+        # one-hot encoding to spare gpu memory
+        tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.float32, device=target_scores.device))
+        pred_list.append(out_scores)
+
+    # calculate metrics
+    preds = torch.vstack(pred_list)
+    tgts= torch.vstack(tgt_list)
+
+    ap = metric_ap(preds, tgts)
+    ar= metric_ar(preds, tgts)
+    acc= metric_acc(preds, tgts)
+
+    return acc, ap, ar, loss, loss_score, loss_emb
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DistilledBERT training and evaluation script', parents=[get_args_parser()])
