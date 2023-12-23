@@ -5,16 +5,16 @@ import torch
 from typing import Tuple
 from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
-from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
+# from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
 
 class PatentDataset(Dataset):
-    """_summary_
+    """dataset of Patents
 
     Args:
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda', prior_decoder:str='gpt2'):
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda'):
         """ create a PatentDataset object
 
         Args:
@@ -29,8 +29,8 @@ class PatentDataset(Dataset):
         self.level_score = 5
      
         # create the decoder that acts as prior knownledge
-        self.prior_tok   =   GPT2Tokenizer.from_pretrained(prior_decoder)
-        self.prior_model =   GPT2LMHeadModel.from_pretrained(prior_decoder)
+        # self.prior_tok   =   GPT2Tokenizer.from_pretrained(prior_decoder)
+        # self.prior_model =   GPT2LMHeadModel.from_pretrained(prior_decoder)
         
         raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
         self._process(raw_data)
@@ -38,7 +38,10 @@ class PatentDataset(Dataset):
     
 
     def _process(self, raw_data:pd.DataFrame):
-        """ fuse the anchor and context into a continous token representation
+        """fuse the anchor and context into a continous token representation
+
+        Args:
+            raw_data (pd.DataFrame): dataset
         """
         
         # save only relevant data
@@ -51,6 +54,14 @@ class PatentDataset(Dataset):
     
 
     def _convert_score(self,score:float)->torch.Tensor:
+        """convert score into one-hot encoding
+
+        Args:
+            score (float): score level
+
+        Returns:
+            torch.Tensor: one-hot encoding vector
+        """
         
         cls = torch.zeros((self.level_score), )
         match score:
@@ -101,20 +112,20 @@ class PatentDataset(Dataset):
         
         
         # prompt 
-        prompt= f'{target_text} unrelated to:'
-        unrelated_output = self.prior_model.generate(self.prior_tok.encode(prompt, return_tensors="pt"), max_length=30)[0]
+        # prompt= f'{target_text} unrelated to:'
+        # unrelated_output = self.prior_model.generate(self.prior_tok.encode(prompt, return_tensors="pt"), max_length=30)[0]
         
-        unrelated_text = self.prior_tok.decode(unrelated_output, skip_special_tokens=True)
+        # unrelated_text = self.prior_tok.decode(unrelated_output, skip_special_tokens=True)
         
-        unrelated_text = " ".join(unrelated_text.split())       
+        # unrelated_text = " ".join(unrelated_text.split())       
         
-        neg_example = self.tokenizer(
-            unrelated_text,
-            max_length=self.max_len,
-            add_special_tokens=True, 
-            truncation=True, 
-            padding='max_length', return_tensors="pt"
-        )       
+        # neg_example = self.tokenizer(
+        #     unrelated_text,
+        #     max_length=self.max_len,
+        #     add_special_tokens=True, 
+        #     truncation=True, 
+        #     padding='max_length', return_tensors="pt"
+        # )       
         anchor_data= {
             'ids': anchor['input_ids'],
             'mask':anchor['attention_mask'] 
