@@ -2,14 +2,52 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import DistilBertModel
+from peft import LoftQConfig, LoraConfig, get_peft_model, PeftModel
+
+
 import math
-from typing import Tuple
+from typing import Dict, Tuple
+
+
+def qlora_mode(base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
+    loftq_config = LoftQConfig()           # set 4bit quantization
+    lora_config = LoraConfig(r=rank, lora_alpha=alpha, target_modules=["query_key_value"], init_lora_weights="loftq")
+    peft_model = get_peft_model(base_model, lora_config)
+
+    return peft_model
 
 class PhraseDistilBERT(nn.Module):
-    def __init__(self, score_level:int=5, pool_out=256):
+    def __init__(self, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
+                 qlora_rank:int=1, qlora_alpha:int=1):
+        """_summary_
+        Args:
+            score_level (int, optional): number of score . Defaults to 5.
+            pool_out (int, optional): pooling output dimension of the hidden layer from bert. Defaults to 256.
+            use_qlora (bool, optional): use QLoRa. Defaults to True.
+            qlora_rank (int, optional): rank of QLoRA. Defaults to 1.
+            qlora_alpha (int, optional): gain of QLoRA. Defaults to 1.
+        """
+
         super(PhraseDistilBERT, self).__init__()
-        self.emb1= DistilBertModel.from_pretrained("distilbert-base-uncased")
-        self.emb2= DistilBertModel.from_pretrained("distilbert-base-uncased")
+
+        if use_qlora:
+            self.emb1= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"))
+            self.emb2= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"))
+
+        else:
+            self.emb1= DistilBertModel.from_pretrained("distilbert-base-uncased")
+            self.emb2= DistilBertModel.from_pretrained("distilbert-base-uncased")
+
+
+        # freeze all embedding layers
+        for param in self.emb2.embeddings.parameters():
+            param.requires_grad = False
+
+        for param in self.emb2.embeddings.parameters():
+            param.requires_grad = False
+
+
+
         self.pool =nn.AdaptiveAvgPool2d((1, pool_out))
         
 
@@ -20,17 +58,19 @@ class PhraseDistilBERT(nn.Module):
 
         self.softmax = nn.Softmax(dim=-1)
         
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(pool_out,128),
-        #     nn.ReLU(), 
-        #     nn.Linear(128,32),      
-        #     nn.ReLU(),
-        #     nn.Linear(32, score_level),
-        #     nn.ReLU()
-        #     )
-        self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, anchor, target) ->Tuple[torch.Tensor]:
+    def forward(self, anchor:Dict[str, torch.Tensor], target:Dict[str, torch.Tensor]) ->Tuple[torch.Tensor]:
+        """_summary_
+
+        Args:
+            anchor (torch.Tensor): anchor dictionary containts the ids and mask of the input tokens
+            target (torch.Tensor): target dictionary containts the ids and mask of the input tokens
+
+        Returns:
+            Tuple[torch.Tensor]: (latent embedding of the anchor,
+                                  latent embedding of the target,
+                                  score logits)
+        """
         hidden1 = self.emb1(input_ids=anchor['ids'], attention_mask=anchor['mask']).last_hidden_state
         hidden2 = self.emb2(input_ids=target['ids'], attention_mask=target['mask']).last_hidden_state
   
