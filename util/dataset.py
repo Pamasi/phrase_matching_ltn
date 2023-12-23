@@ -5,7 +5,7 @@ import torch
 from typing import Tuple
 from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
-from transformers import AutoTokenizer, pipeline
+from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
 
 class PatentDataset(Dataset):
     """_summary_
@@ -14,7 +14,7 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda', prior_decoder:str='meta-llama/Llama-2-7b-chat-hf'):
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda', prior_decoder:str='gpt2'):
         """ create a PatentDataset object
 
         Args:
@@ -29,13 +29,8 @@ class PatentDataset(Dataset):
         self.level_score = 5
      
         # create the decoder that acts as prior knownledge
-        self.prior_tok = AutoTokenizer.from_pretrained(prior_decoder)
-        self.prior_pipeline = pipeline(
-            "text-generation",
-            model=prior_decoder,
-            torch_dtype=torch.float16,
-            device_map="auto",
-        )
+        self.prior_tok   =   GPT2Tokenizer.from_pretrained(prior_decoder)
+        self.prior_model =   GPT2LMHeadModel.from_pretrained(prior_decoder)
         
         raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
         self._process(raw_data)
@@ -106,15 +101,10 @@ class PatentDataset(Dataset):
         
         
         # prompt 
-        prompt = f'Given the phrase \"{target_text}\" given a phrase which is similar, but unrelated'
-        unrelated_text =pipeline(
-            'I liked "Breaking Bad" and "Band of Brothers". Do you have any recommendations of other shows I might like?\n',
-            do_sample=True,
-            top_k=1,
-            num_return_sequences=1,
-            eos_token_id=self.prior_tok.eos_token_id,
-            max_length=self.max_len
-        )
+        prompt= f'{target_text} unrelated to:'
+        unrelated_output = self.prior_model.generate(self.prior_tok.encode(prompt, return_tensors="pt"), max_length=30)[0]
+        
+        unrelated_text = self.prior_tok.decode(unrelated_output, skip_special_tokens=True)
         
         unrelated_text = " ".join(unrelated_text.split())       
         
