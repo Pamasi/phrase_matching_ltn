@@ -46,7 +46,7 @@ def main(args):
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
 
-    criterion = { 'ce': BCEWithLogitsLoss(), 'sim': CosineEmbeddingLoss()}
+    criterion = { 'ce': BCEWithLogitsLoss(), 'sim': CosineEmbeddingLoss(), 'emb_weight':args.emb_weight}
 
 
     # reproducibility
@@ -135,7 +135,7 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         loss_emb = criterion['sim'](latent1, latent2, label_type)
 
 
-        loss = loss_score + loss_emb
+        loss = loss_score + loss_emb*criterion['emb_weight']
         loss.backward()
         optimizer.step()
             
