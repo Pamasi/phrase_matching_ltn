@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import pandas as pd
 import torch
-from typing import Tuple
+from typing import Dict, List, Tuple
 from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
 # from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
@@ -25,7 +25,7 @@ class PatentDataset(Dataset):
         """
         self.tokenizer = tokenizer
         self.max_len = max_len
-        self.device = device
+        #self.device = device
         self.level_score = 5
      
         # create the decoder that acts as prior knownledge
@@ -143,34 +143,62 @@ class PatentDataset(Dataset):
         }
         
 class PatentCollator(object):
-    def __init__(self, device):
-        self.device = device
-        
-    def __call__(self, batch)->Tuple[torch.Tensor]:
+    def __call__(self, batch:List[Dict[str, torch.Tensor]])->Tuple[torch.Tensor]:
         """ collate batch to effiency purposes
 
         Args:
-            batch (_type_): batch of element
+            batch (List[Dict[str, torch.Tensor]]): batch of elements
 
         Returns:
             Tuple[torch.tensor]: optimized batch
         """
-        anchor_ids = torch.vstack([ b['anchor']['ids'] for b in batch ]).to(self.device)
-        anchor_mask = torch.vstack([ b['anchor']['mask'] for b in batch ]).to(self.device)
+        anchor_ids = torch.vstack([ b['anchor']['ids'] for b in batch ])
+        anchor_mask = torch.vstack([ b['anchor']['mask'] for b in batch ])
         
         anchors = {'ids': anchor_ids, 'mask': anchor_mask}
         
-        target_ids = torch.vstack([ b['target']['ids'] for b in batch ]).to(self.device)
-        target_mask = torch.vstack([ b['target']['mask'] for b in batch ]).to(self.device)
+        target_ids = torch.vstack([ b['target']['ids'] for b in batch ])
+        target_mask = torch.vstack([ b['target']['mask'] for b in batch ])
 
         
         targets = {'ids': target_ids, 'mask': target_mask}
         
-        scores =  torch.vstack([ b['score'] for b in batch ]).to(self.device)
+        scores =  torch.vstack([ b['score'] for b in batch ])
         
 
         return (anchors, targets, scores)
+    
+    def pin_memory(self, batch:List[Dict[str, torch.Tensor]]) ->Tuple[torch.Tensor]:
+        """pin tensors to pinned_memory
 
+        Args:
+            batch (List[Dict[str, torch.Tensor]]): batch of elements
+        Returns:
+            Tuple[torch.Tensor]: pinned tensor wrapped in dictionaries
+        """
+        (anchors, targets, scores) = batch
+        anchors_pinned = {'ids': anchors['ids'].pin_memory(), 'mask':   anchors['mask'].pin_memory()}
+        targets_pinned = {'ids': targets['ids'].pin_memory(), 'mask':   targets['mask'].pin_memory()}
+        scores_pinned = scores.pin_memory()
 
+        return (anchors_pinned, targets_pinned, scores_pinned)
+    
+    def move_to_gpu(device:torch.device, anchors:Dict[str, torch.Tuple],
+                     targets:Dict[str, torch.Tuple], target_scores:Dict[str, torch.Tuple])-> Tuple[Dict[str,torch.Tensor]]:
+        """move all tensor to device 
+
+        Args:
+            device (torch.device): device to be used
+            anchors (Dict[str, torch.Tuple]): anchors from the batch
+            targets (Dict[str, torch.Tuple]): targets from the batch
+            target_scores (Dict[str, torch.Tuple]): target scores from the batch
+
+        Returns:
+            Tuple[Dict[str,torch.Tensor]]: anchors, target and target scores that are in the gpu
+        """
+        anchors_gpu = {'ids': anchors['ids'].to(device), 'mask':   anchors['mask'].to(device)}
+        targets_gpu = {'ids': targets['ids'].to(device), 'mask':   targets['mask'].to(device)}
+        target_scores_gpu = target_scores.to(device)
+        return (anchors_gpu, targets_gpu ,target_scores_gpu)
     
     
