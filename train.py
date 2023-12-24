@@ -119,7 +119,6 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
 
     tgt_list = []
     pred_list = []
-    i = 0;
 
     for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
         # TODO: find a nicer way
@@ -145,10 +144,6 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         # one-hot encoding to spare gpu memory
         tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.long, device=target_scores.device))
         pred_list.append(out_scores)
-        i+=1
-
-        if i==4:
-            break
 
     # calculate metrics
     preds = torch.concat(pred_list)
