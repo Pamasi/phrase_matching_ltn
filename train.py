@@ -101,6 +101,21 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
          optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
          criterion: Dict[str, torch.nn.Module], 
          metric: Dict[str, Metric], move_to_gpu: Callable) -> Tuple[Dict[str,torch.Tensor]]:
+    """ execute a step of one epoch
+
+    Args:
+        data_loader (DataLoader): data loader
+        device (torch.device):device to be used
+        model (torch.nn.Module): neural network to train
+        optimizer (torch.optim): optimizer to be used in training
+        lr_scheduler (torch.optim.lr_scheduler): learning rate
+        criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
+        metric (Dict[str, Metric]): dict of all metrics to be computed
+        move_to_gpu (Callable): function used to move data from cpu to gpu
+
+    Returns:
+        Tuple[Dict[str,torch.Tensor]]: metrics and loss results
+    """
 
     tgt_list = []
     pred_list = []
