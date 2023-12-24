@@ -5,3 +5,7 @@
 *.pyc
 prior_knowledge/*
 paper/*
+*.log
+*-run
+*.wandb
+*wandb*
