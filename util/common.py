@@ -16,8 +16,9 @@ def get_args_parser():
     parser.add_argument('--c_lr_min', default=5e-6, type=float)
     parser.add_argument('--c_lr_max', default=5e-5, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
-    parser.add_argument('--emb_weight', default=0.01, type=float, help='embedding loss weight')
+    parser.add_argument('--emb_weight', default=0.1, type=float, help='embedding loss weight')
     parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
     parser.add_argument('--seed', default=23, type=int, help='seed')
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
+    parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
     return parser

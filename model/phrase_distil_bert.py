@@ -18,7 +18,7 @@ def qlora_mode(base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
 
 class PhraseDistilBERT(nn.Module):
     def __init__(self, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
-                 qlora_rank:int=1, qlora_alpha:int=1):
+                 qlora_rank:int=1, qlora_alpha:int=1, freeze_emb:bool=False):
         """_summary_
         Args:
             score_level (int, optional): number of score . Defaults to 5.
@@ -26,6 +26,7 @@ class PhraseDistilBERT(nn.Module):
             use_qlora (bool, optional): use QLoRa. Defaults to True.
             qlora_rank (int, optional): rank of QLoRA. Defaults to 1.
             qlora_alpha (int, optional): gain of QLoRA. Defaults to 1.
+            freeze_emb (int, optional): freeze embedding. Defaults to False
         """
 
         super(PhraseDistilBERT, self).__init__()
@@ -39,12 +40,12 @@ class PhraseDistilBERT(nn.Module):
             self.emb2= DistilBertModel.from_pretrained("distilbert-base-uncased")
 
 
-        # freeze all embedding layers
-        for param in self.emb2.embeddings.parameters():
-            param.requires_grad = False
+        if freeze_emb:
+            for param in self.emb2.embeddings.parameters():
+                param.requires_grad = False
 
-        for param in self.emb2.embeddings.parameters():
-            param.requires_grad = False
+            for param in self.emb2.embeddings.parameters():
+                param.requires_grad = False
 
 
 
