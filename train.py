@@ -39,7 +39,7 @@ def main(args):
     train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
     val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
-                            num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True)
+                            num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
     
     model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, freeze_emb=args.freeze_emb)
     model.to(args.device)
@@ -130,7 +130,7 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         loss_score = criterion['ce'](target_scores, out_scores)
         
 
-        label_type = torch.tensor([ 1 if torch.argmax(scores) <2 else  -1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+        label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
 
         loss_emb = criterion['sim'](latent1, latent2, label_type)
 
