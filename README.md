@@ -2,5 +2,9 @@
 Neuro-symbolic model used to participate for the competition "U.S. Patent Phrase to Phrase Matching"
 
 ## TODO:
-- [] check validation set
-- [] nesy integration
+- [] text augmentation
+- [] nesy integration: 
+    - USE A KG takent from patent
+    - USE synonim as rule:
+        Forall <x,y> IsSyn(x,y) =>IsScore(x, 0.25)
+        Forall <x,y> IsContrary(x,y) =>IsScore(x, 0.0)
