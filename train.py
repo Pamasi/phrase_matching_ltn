@@ -10,7 +10,7 @@ import wandb
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
 from torchmetrics import Metric
 from util.dataset import PatentDataset, PatentCollator
-from util.common import get_args_parser
+from util.common import get_args_parser, save_ckpt
 from model.phrase_distil_bert import PhraseDistilBERT
 
 
@@ -71,6 +71,7 @@ def main(args):
 
     model.train()
 
+    best_ap = 0 
     for epoch in trange(args.n_epoch):
         # step
         train_loss, _= step(train_loader, args.device, model, optimizer, lr_scheduler, criterion, move_to_gpu=PatentCollator.move_to_gpu)
@@ -96,6 +97,12 @@ def main(args):
 
         else:
             print(dict_log)
+
+        # save best weight
+        if val_metric['ap'] > best_ap:
+            best_ap = val_metric['ap']
+            save_ckpt(model, epoch, train_loss['tot'],
+                      optimizer, lr_scheduler, torch.get_rng_state()  )
 
 def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
          optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
