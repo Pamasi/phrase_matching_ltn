@@ -18,7 +18,7 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,is_val:bool,
                  p_syn:float=0.5):
         """ create a PatentDataset object
 
@@ -27,7 +27,8 @@ class PatentDataset(Dataset):
             tokenizer (DistilBertTokenizerFast): tokenizer
             max_len (int): max lenght of a sentence
             seed (int): seed of the random generator
-            p_syn (float): probability used of changing POS in a phrase
+            is_val (bool): is validation set
+            p_syn (float): probability used of changing POS in a phrase. Defaults 0.5.
         """
         self.tokenizer = tokenizer
         self.max_len = max_len
@@ -48,6 +49,7 @@ class PatentDataset(Dataset):
         nltk.download('punkt')
         nltk.download('averaged_perceptron_tagger')
 
+        self.is_val=is_val
         self.p_syn=0.5
     
 
@@ -147,7 +149,7 @@ class PatentDataset(Dataset):
         target_text = self.data['target'][index]
         anchor_text = " ".join(anchor_text.split())
 
-        if random.random() > self.p_syn:
+        if self.is_val==False and random.random() > self.p_syn:
             target_text = self.__sub_synomyn(target_text)
 
         target_text = " ".join(target_text.split())       
