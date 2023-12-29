@@ -30,8 +30,10 @@ def get_args_parser():
     parser.add_argument('--score_weight', default=10, type=float, help='score loss weight')
     parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
     parser.add_argument('--seed', default=23, type=int, help='seed')
+    parser.add_argument('--p_syn', default=0.5, type=float, help='probability of changing POS in a phrase')
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
+    parser.add_argument('--dir', default='debug', type=str, help='directory of checkpoints')
     return parser
 
 
@@ -49,6 +51,7 @@ def save_ckpt(
     torch.save({ 'epoch': epoch,
                     'model_state_dict': net.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss,
                     'lr': scheduler.state_dict(),
                     'torch_state': torch_state
                     },

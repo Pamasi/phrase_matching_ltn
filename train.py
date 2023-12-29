@@ -6,7 +6,7 @@ from transformers import DistilBertTokenizerFast
 from tqdm import trange
 from typing import Dict, Optional, Tuple, Callable
 import wandb
-
+import random
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
 from torchmetrics import Metric
 from util.dataset import PatentDataset, PatentCollator
@@ -31,8 +31,8 @@ def main(args):
     path_val =  os.path.join(os.getcwd(), args.path_val)
     
     torch.cuda.set_device(0)
-    train_data = PatentDataset(path_train, tokenizer, args.max_len)
-    val_data = PatentDataset(path_val, tokenizer, args.max_len)
+    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn)
+    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, p_syn=args.p_syn)
 
     collate_fn = PatentCollator()
 
@@ -53,7 +53,8 @@ def main(args):
 
 
     # reproducibility
-    torch.manual_seed(args.seed)
+    torch.manual_seed(args.seed)    
+    random.seed(23)
     
     # configure metrics
     metric_ap = MulticlassAveragePrecision(num_classes=args.score_level, average="macro", thresholds=None).to(args.device)
@@ -102,7 +103,7 @@ def main(args):
         if val_metric['ap'] > best_ap:
             best_ap = val_metric['ap']
             save_ckpt(model, epoch, train_loss['tot'],
-                      optimizer, lr_scheduler, torch.get_rng_state()  )
+                      optimizer, lr_scheduler,args.dir, torch.get_rng_state()  )
 
 def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
          optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 

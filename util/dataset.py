@@ -6,6 +6,10 @@ from typing import Dict, List, Tuple
 from torch.utils.data import Dataset
 from transformers import DistilBertTokenizerFast
 # from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
+import nltk
+from nltk.corpus import wordnet as wn
+from nltk import word_tokenize
+import random
 
 class PatentDataset(Dataset):
     """dataset of Patents
@@ -14,18 +18,20 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, device:torch.device='cuda'):
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,
+                 p_syn:float=0.5):
         """ create a PatentDataset object
 
         Args:
             path (str): path of the dataset
             tokenizer (DistilBertTokenizerFast): tokenizer
             max_len (int): max lenght of a sentence
-            prior_decoder (str): name of the decoder used as prior
+            seed (int): seed of the random generator
+            p_syn (float): probability used of changing POS in a phrase
         """
         self.tokenizer = tokenizer
         self.max_len = max_len
-        #self.device = device
+
         self.level_score = 5
      
         # create the decoder that acts as prior knownledge
@@ -35,6 +41,14 @@ class PatentDataset(Dataset):
         raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
         self._process(raw_data)
         
+        random.seed(seed)
+
+        # dowload util for POS synset
+        nltk.download('wordnet')
+        nltk.download('punkt')
+        nltk.download('averaged_perceptron_tagger')
+
+        self.p_syn=0.5
     
 
     def _process(self, raw_data:pd.DataFrame):
@@ -83,7 +97,47 @@ class PatentDataset(Dataset):
         
         cls[idx]=1.0
         return cls 
-                
+    def __sub_synomyn(self,target_phrase:str)->str:
+        """substitutes POS of a target phrase with a similar one
+        Args:
+            target_phrase (str): phrase to be modified
+
+        Returns:
+            str: modified phrase
+        """
+   
+        tok_list = str(target_phrase).split()
+        text = word_tokenize(target_phrase)
+        pos_info = nltk.pos_tag(text)
+
+        idx = random.randint(0,len(pos_info)-1)
+
+        # substitute word if is adj, adv, nounm pron, verrb
+        adj = ['JJ', 'JJR', 'JJS']
+        noun = ['NN', 'NNS']
+        verb = ['VB', 'VBD', 'VBG', 'VBN', 'VBZ']
+
+        w_tag = pos_info[idx][1]
+        tok = pos_info[idx][0]
+        if  w_tag in adj:
+            synset = wn.synsets(tok, pos=wn.ADJ)
+        elif w_tag in noun:
+            synset = wn.synsets(tok, pos=wn.NOUN)
+        elif w_tag in verb:
+            synset = wn.synsets(tok, pos=wn.VERB)
+
+
+        lemma = [ l.name() for s in wn.synsets('mixing', pos=wn.VERB) for l in s.lemmas() ]
+
+        idx_lemma = random.randint(0,len(lemma)-1)
+
+        tok_list[idx] = lemma[idx_lemma]
+
+
+        target_synomym = ' '.join(tok_list)
+
+        return target_synomym
+    
     def __getitem__(self, index):
         
         score  =  self._convert_score(self.data['score'][index].astype(float))
@@ -91,6 +145,11 @@ class PatentDataset(Dataset):
         anchor_text = " ".join(anchor_text.split())
         
         target_text = self.data['target'][index]
+        anchor_text = " ".join(anchor_text.split())
+
+        if random.random() > self.p_syn:
+            target_text = self.__sub_synomyn(target_text)
+
         target_text = " ".join(target_text.split())       
 
 
