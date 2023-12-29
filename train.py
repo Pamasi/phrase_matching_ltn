@@ -32,7 +32,7 @@ def main(args):
     
     torch.cuda.set_device(0)
     train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn)
-    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, p_syn=args.p_syn)
+    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True)
 
     collate_fn = PatentCollator()
 
@@ -66,7 +66,7 @@ def main(args):
     # configure wandb 
     if args.no_track==False:
         wandb.login()
-        run = wandb.init(project='phrase_matching', config=args)  
+        run = wandb.init(project='phrase_matching', config=args, name=os.getenv("WANDB_DIR"))  
 
 
 
