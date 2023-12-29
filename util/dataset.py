@@ -18,7 +18,7 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,is_val:bool,
+    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,is_val:bool=False,
                  p_syn:float=0.5):
         """ create a PatentDataset object
 
@@ -27,7 +27,7 @@ class PatentDataset(Dataset):
             tokenizer (DistilBertTokenizerFast): tokenizer
             max_len (int): max lenght of a sentence
             seed (int): seed of the random generator
-            is_val (bool): is validation set
+            is_val (bool): is validation set. Defaults False
             p_syn (float): probability used of changing POS in a phrase. Defaults 0.5.
         """
         self.tokenizer = tokenizer
