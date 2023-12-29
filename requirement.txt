@@ -12,3 +12,6 @@ rapids
 accelerate
 torchmetrics
 peft
+conceptnet-lite
+nltk
+
