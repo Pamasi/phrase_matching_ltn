@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import DistilBertModel
-from peft import LoftQConfig, LoraConfig, get_peft_model, PeftModel
+from peft import LoraConfig, get_peft_model, PeftModel
 
 
 import math
@@ -10,8 +10,12 @@ from typing import Dict, Tuple
 
 
 def qlora_mode(base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
-    loftq_config = LoftQConfig()           # set 4bit quantization
-    lora_config = LoraConfig(r=rank, lora_alpha=alpha, target_modules=["query_key_value"], init_lora_weights="loftq")
+           # set 4bit quantization
+    lora_config = LoraConfig(r=rank, 
+                             lora_alpha=alpha, 
+                            target_modules=['q_lin', 'k_lin', 'v_lin'],
+                            init_lora_weights="loftq")
+    
     peft_model = get_peft_model(base_model, lora_config)
 
     return peft_model
@@ -32,8 +36,9 @@ class PhraseDistilBERT(nn.Module):
         super(PhraseDistilBERT, self).__init__()
 
         if use_qlora:
-            self.emb1= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"))
-            self.emb2= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"))
+            print('QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
+            self.emb1= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
+            self.emb2= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
 
         else:
             self.emb1= DistilBertModel.from_pretrained("distilbert-base-uncased")

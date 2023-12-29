@@ -18,6 +18,7 @@ def get_args_parser():
     parser.add_argument('--max_len', default=120, type=int, help='max length of the tokenizer')
     parser.add_argument('--qlora', action='store_true', help='use qlora')
     parser.add_argument('--qlora_rank', default=1, type=int, help='rank used in qlora')
+    parser.add_argument('--qlora_alpha', default=1, type=int, help='gain used in qlora')
     parser.add_argument('--batch', default=32, type=int, help='batch size')
     parser.add_argument('--num_workers', default=2, type=int, help='number of workers')
     parser.add_argument('--score_level', default=5, type=int, help='level of scores')

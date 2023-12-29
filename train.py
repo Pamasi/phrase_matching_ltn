@@ -41,7 +41,7 @@ def main(args):
     val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
                             num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
     
-    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, freeze_emb=args.freeze_emb)
+    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, freeze_emb=args.freeze_emb)
     model.to(args.device)
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
