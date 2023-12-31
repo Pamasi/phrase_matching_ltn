@@ -9,10 +9,10 @@ import wandb
 import random
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
 from torchmetrics import Metric
+import optuna
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
 from model.phrase_distil_bert import PhraseDistilBERT
-
 
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -20,26 +20,57 @@ torch.backends.cudnn.allow_tf32 = True
 # to enable reproducibility
 torch.backends.cudnn.benchmark = False
 
-
+os.environ["WANDB_START_METHOD"] = "thread"
 #os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
-def main(args):
+
+
+
+
+class Objective:
+    """object function for hyperparameters search
+    """
+    def __init__(self, lora_rank_range:Tuple[int],
+                    lora_alpha_range:Tuple[int],
+                    lr_range:Tuple[float],
+                    score_weight_range: Tuple[float],
+                    emb_weight_range: Tuple[float],
+                    args:argparse.ArgumentParser):
+
+        self.rank_min = lora_rank_range[0]
+        self.rank_max = lora_rank_range[1]
+        self.alpha_min = lora_alpha_range[0]
+        self.alpha_max = lora_alpha_range[1] 
+        
+        self.lr_min = lr_range[0]
+        self.lr_max = lr_range[1]
+
+        self.sw_r_min = score_weight_range[0]
+        self.sw_r_max = score_weight_range[1]
+
+        self.ew_r_min = emb_weight_range[0]
+        self.ew_r_max = emb_weight_range[1]
+
+        self.args = args
+
+    def __call__(self, trial):
+
+        self.args.qlora = trial.suggest_int("qlora_rank", self.rank_min, self.rank_max)
+        self.args.qlora_alpha = trial.suggest_int("qlora_alpha", self.alpha_min, self.alpha_max)
+
+        self.args.emb_weight = trial.suggest_float("score_weight_loss", self.sw_r_min, self.sw_r_max)
+        self.args.score_weight = trial.suggest_float("emb_weight_loss", self.ew_r_min, self.ew_r_max)
+        self.args.lr = trial.suggest_float("lr", self.lr_min, self.lr_max)
+
+
+      
+        return experiment(args)
+
+
+
+def experiment(args)->torch.float:
  
 
-    tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
-    
-    path_train =  os.path.join(os.getcwd(), args.path_train)
-    path_val =  os.path.join(os.getcwd(), args.path_val)
-    
-    torch.cuda.set_device(0)
-    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn)
-    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True)
-
-    collate_fn = PatentCollator()
-
-    train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
-                               num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
-                            num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
+    train_loader, val_loader = create_loader(args)
     
     model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, freeze_emb=args.freeze_emb)
     model.to(args.device)
@@ -66,7 +97,13 @@ def main(args):
     # configure wandb 
     if args.no_track==False:
         wandb.login()
-        run = wandb.init(project='phrase_matching', config=args, name=os.getenv("WANDB_DIR"))  
+
+        wandb_run_name = f'SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+
+        if args.qlora:
+            wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
+        
+        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True,)  
 
 
 
@@ -104,6 +141,27 @@ def main(args):
             best_ap = val_metric['ap']
             save_ckpt(model, epoch, train_loss['tot'],
                       optimizer, lr_scheduler,args.dir, torch.get_rng_state()  )
+            
+    return val_metric['ap']
+
+def create_loader(args):
+    tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
+    
+    path_train =  os.path.join(os.getcwd(), args.path_train)
+    path_val =  os.path.join(os.getcwd(), args.path_val)
+    
+    torch.cuda.set_device(0)
+    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn)
+    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True)
+
+    collate_fn = PatentCollator()
+
+    train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
+                               num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
+                            num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
+                            
+    return train_loader,val_loader
 
 def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
          optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
@@ -181,4 +239,15 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DistilledBERT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
-    main(args)
+
+    if args.optuna:
+        objective = Objective(lora_rank_range=(1,8), lora_alpha_range= (1,16), lr_range=(2e-6, 2e-4),score_weight_range= (0.1, 15),emb_weight_range= (0.1,15), args=args)
+        study = optuna.create_study(
+            direction="maximize",
+            study_name="NAS",
+            pruner=optuna.pruners.MedianPruner()
+        )
+        study.optimize(objective, n_trials=5, timeout=600)
+
+    else:
+        experiment(args)

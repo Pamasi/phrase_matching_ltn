@@ -12,6 +12,6 @@ rapids
 accelerate
 torchmetrics
 peft
-conceptnet-lite
 nltk
-
+scipy
+optuna

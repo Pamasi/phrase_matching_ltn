@@ -33,6 +33,7 @@ def get_args_parser():
     parser.add_argument('--seed', default=23, type=int, help='seed')
     parser.add_argument('--p_syn', default=0.5, type=float, help='probability of changing POS in a phrase')
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
+    parser.add_argument('--optuna', action='store_true', help='use optuna to select hyperparameters')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
     parser.add_argument('--dir', default='debug', type=str, help='directory of checkpoints')
     return parser
