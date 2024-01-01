@@ -36,7 +36,7 @@ class PhraseDistilBERT(nn.Module):
         super(PhraseDistilBERT, self).__init__()
 
         if use_qlora:
-            print('QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
+            print(f'QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
             self.emb1= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
             self.emb2= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
 
