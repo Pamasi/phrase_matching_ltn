@@ -140,7 +140,7 @@ def experiment(args)->torch.float:
         if val_metric['ap'] > best_ap:
             best_ap = val_metric['ap']
             save_ckpt(model, epoch, train_loss['tot'],
-                      optimizer, lr_scheduler,args.dir, torch.get_rng_state()  )
+                      optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
             
     return val_metric['ap']
 

@@ -46,7 +46,8 @@ def save_ckpt(
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[torch.optim.lr_scheduler.CyclicLR] = None,
     dir: str='', 
-    torch_state=''
+    torch_state='',
+    save_best:bool=False
     ) -> None:
 
     
@@ -57,7 +58,7 @@ def save_ckpt(
                     'lr': scheduler.state_dict(),
                     'torch_state': torch_state
                     },
-               get_ckpt_dir(epoch, dir)
+               get_ckpt_dir('best' if save_best else epoch, dir)
     )    
 
 def get_ckpt_dir(epoch:int, dir:str='' ) -> str:
