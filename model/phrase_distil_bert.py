@@ -22,7 +22,7 @@ def qlora_mode(base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
 
 class PhraseDistilBERT(nn.Module):
     def __init__(self, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
-                 qlora_rank:int=1, qlora_alpha:int=1, freeze_emb:bool=False):
+                 qlora_rank:int=1, qlora_alpha:int=1, freeze_emb:bool=False, use_mlp:bool=True):
         """_summary_
         Args:
             score_level (int, optional): number of score . Defaults to 5.
@@ -31,6 +31,7 @@ class PhraseDistilBERT(nn.Module):
             qlora_rank (int, optional): rank of QLoRA. Defaults to 1.
             qlora_alpha (int, optional): gain of QLoRA. Defaults to 1.
             freeze_emb (int, optional): freeze embedding. Defaults to False
+            use_mlp (bool, optional): use a MLP instead of a non-linear matrix projection. Defaults to True
         """
 
         super(PhraseDistilBERT, self).__init__()
@@ -57,10 +58,21 @@ class PhraseDistilBERT(nn.Module):
         self.pool =nn.AdaptiveAvgPool2d((1, pool_out))
         
 
-        self.out_size = score_level
 
-        self.W = nn.Parameter(torch.rand(pool_out*3, score_level, requires_grad=True))
-        self.sigmoid = nn.Sigmoid()
+        self.use_mlp = use_mlp
+        if self.use_mlp==True:
+            self.mlp = nn.Sequential(
+                    nn.Linear(pool_out*3,64),
+                    nn.ReLU(), 
+                    nn.Linear(64,32),      
+                    nn.ReLU(),
+                    nn.Linear(32, score_level),
+                    nn.ReLU()
+            )
+
+        else:
+            self.W = nn.Parameter(torch.rand(pool_out*3, score_level, requires_grad=True))
+            self.sigmoid = nn.Sigmoid()
 
         self.softmax = nn.Softmax(dim=-1)
         
@@ -84,8 +96,14 @@ class PhraseDistilBERT(nn.Module):
         pool1 = self.pool(hidden1).squeeze(dim=1)
         pool2 = self.pool(hidden2).squeeze(dim=1)
       
+        
         x = torch.cat((pool1, pool2, torch.abs(pool1 - pool2)), dim=-1)
-        x = self.sigmoid(torch.matmul(x,self.W))
+
+        if self.use_mlp:
+            x = self.mlp(x)
+        else:
+            x = self.sigmoid(torch.matmul(x,self.W))
+
         scores = self.softmax(x)
 
         return (pool1, pool2, scores)

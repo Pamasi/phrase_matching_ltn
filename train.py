@@ -54,8 +54,8 @@ class Objective:
 
     def __call__(self, trial):
 
-        self.args.qlora = trial.suggest_int("qlora_rank", self.rank_min, self.rank_max)
-        self.args.qlora_alpha = trial.suggest_int("qlora_alpha", self.alpha_min, self.alpha_max)
+        #self.args.qlora = trial.suggest_int("qlora_rank", self.rank_min, self.rank_max)
+        #self.args.qlora_alpha = trial.suggest_int("qlora_alpha", self.alpha_min, self.alpha_max)
 
         self.args.emb_weight = trial.suggest_float("score_weight_loss", self.sw_r_min, self.sw_r_max)
         self.args.score_weight = trial.suggest_float("emb_weight_loss", self.ew_r_min, self.ew_r_max)
@@ -72,7 +72,8 @@ def experiment(args)->torch.float:
 
     train_loader, val_loader = create_loader(args)
     
-    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, freeze_emb=args.freeze_emb)
+    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, 
+                             freeze_emb=args.freeze_emb, use_mlp=args.use_mlp)
     model.to(args.device)
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
@@ -103,8 +104,15 @@ def experiment(args)->torch.float:
         if args.qlora:
             wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
         
+        if args.use_mlp:
+            wandb_run_name = wandb_run_name   + '_MLP'
+        if args.freeze_emb:
+            wandb_run_name = wandb_run_name   + '_FREEZE_EMB'
+        
         run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True,)  
 
+        # automate the name folder
+        args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
 
 
     model.train()
@@ -241,13 +249,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.optuna:
-        objective = Objective(lora_rank_range=(1,8), lora_alpha_range= (1,16), lr_range=(2e-6, 2e-4),score_weight_range= (0.1, 15),emb_weight_range= (0.1,15), args=args)
+        objective = Objective(lora_rank_range=(32,32), lora_alpha_range= (32,32), lr_range=(2e-6, 2e-4),score_weight_range= (0.1, 8),emb_weight_range= (0.1,8), args=args)
         study = optuna.create_study(
             direction="maximize",
             study_name="NAS",
             pruner=optuna.pruners.MedianPruner()
         )
-        study.optimize(objective, n_trials=5, timeout=600)
+        study.optimize(objective, n_trials=10)
 
     else:
         experiment(args)
