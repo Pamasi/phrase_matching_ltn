@@ -79,7 +79,7 @@ def experiment(args)->torch.float:
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
 
     if args.lr_range_test:
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch: epoch*2 )
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: step*2 )
         loss_step = []
     else:
         lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
@@ -103,7 +103,7 @@ def experiment(args)->torch.float:
 
     # configure wandb 
     if args.no_track==False:
-        wandb.login(key=os.environ['WANDB_API_KEY'])
+        wandb.login()
 
         wandb_run_name = f'SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
@@ -128,56 +128,64 @@ def experiment(args)->torch.float:
     model.train()
 
     best_ap = 0 
-    
-    for epoch in trange(args.n_epoch):
-        # step
-        train_loss, _= step(train_loader, args.device, model, optimizer, lr_scheduler, args.lr_range_test, 
-                             criterion, move_to_gpu=PatentCollator.move_to_gpu)
-                                                                                           
-        val_loss, val_metric   = step(val_loader, args.device, model, optimizer, lr_scheduler, args.lr_range_test, 
-                                      criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
-        dict_log =  {
-                    "epoch": epoch,
-                    "train/loss": train_loss['tot'],
-                    "train/loss_score": train_loss['score'],
-                    "train/loss_emb": train_loss['emb'],
-                    "val/acc": val_metric['acc'],
-                    "val/ap":  val_metric['ap'],
-                    "val/ar":  val_metric['ar'],
-                    "val/loss": val_loss['tot'],
-                    "val/loss_score": val_loss['score'],
-                    "val/loss_emb":   val_loss['emb']
-                }
         
-        if args.no_track==False:
-            wandb.log(dict_log )
-
-            run.log_code()
-
-        else:
-            print(dict_log)
-
-        # save best weight
-        if args.lr_range_test:
-            loss_step.extend(val_loss['loss4step'])
-        
-        elif val_metric['ap'] > best_ap:
-                best_ap = val_metric['ap']
-                save_ckpt(model, epoch, train_loss['tot'],
-                        optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
-            
-
-
-        # update scheduler
-        lr_scheduler.step()
-    
     if args.lr_range_test:
-        plt.plot(range(len(loss_step)), loss_step)
-        plt.title('LR RangeTest')
-        plt.xlabel('Step')
-        plt.ylabel('Learning Rate')
+        it =0 
+        for epoch in trange(args.n_epoch):
+            it = lr_range_test(it, train_loader, val_loader, args.device, model, optimizer, lr_scheduler,
+                                criterion, move_to_gpu=PatentCollator.move_to_gpu, run=run, metric=metric)
+        # plt.plot(range(len(loss_step)), loss_step)
+        # plt.title('LR RangeTest')
+        # plt.xlabel('Step')
+        # plt.ylabel('Learning Rate')
 
-        plt.savefig(f'{args.dir}/lr_range_test.jpg')
+        # plt.savefig(f'{args.dir}/lr_range_test.jpg')
+  
+    else:
+        for epoch in trange(args.n_epoch):
+            # step
+            train_loss, _= step(train_loader, args.device, model, optimizer, 
+                                criterion, move_to_gpu=PatentCollator.move_to_gpu)
+                                                                                            
+            val_loss, val_metric   = step(val_loader, args.device, model, optimizer, lr_scheduler, False, 
+                                        criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
+            dict_log =  {
+                        "epoch": epoch,
+                        "train/loss": train_loss['tot'],
+                        "train/loss_score": train_loss['score'],
+                        "train/loss_emb": train_loss['emb'],
+                        "val/acc": val_metric['acc'],
+                        "val/ap":  val_metric['ap'],
+                        "val/ar":  val_metric['ar'],
+                        "val/loss": val_loss['tot'],
+                        "val/loss_score": val_loss['score'],
+                        "val/loss_emb":   val_loss['emb']
+                    }
+            
+            if args.no_track==False:
+                wandb.log(dict_log )
+
+                run.log_code()
+
+            else:
+                print(dict_log)
+
+            # save best weight
+            if args.lr_range_test:
+                loss_step.extend(train_loss['loss4step'])
+
+                for val in val_loss['loss4step']:
+                    wandb.log({'val/step':val}  )
+            elif val_metric['ap'] > best_ap:
+                    best_ap = val_metric['ap']
+                    save_ckpt(model, epoch, train_loss['tot'],
+                            optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
+                
+
+
+            # update scheduler
+            lr_scheduler.step()
+
     return val_metric['ap']
 
 def create_loader(args):
@@ -199,10 +207,82 @@ def create_loader(args):
                             
     return train_loader,val_loader
 
-def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler,  lr_range_test:bool,
+def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
+         optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
          criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable, metric: Optional[Dict[str, Metric]]=None) -> Tuple[Dict[str,torch.Tensor]]:
+         move_to_gpu: Callable, metric: Optional[Dict[str, Metric]]=None,
+         run:Optional[wandb.run]=None) -> int:
+    """ execute a step of one epoch
+
+    Args:
+        it (int): iteration
+        train_loader (DataLoader): train data loader
+        val_loader (DataLoader): val data loader
+        device (torch.device):device to be used
+        model (torch.nn.Module): neural network to train
+        optimizer (torch.optim): optimizer to be used in training
+        lr_scheduler (torch.optim.lr_scheduler): learning rate used only for LR Range Test
+        criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
+        move_to_gpu (Callable): function used to move data from cpu to gpu
+        metric (Optional[Dict[str, Metric]): dict of all metrics to be computed (only for validation set). Default None
+        wandb_run(Optional[wandb.run]): wandb_run. Default None
+
+    Returns:
+        int: last iteration
+    """
+
+
+    for anchors_cpu, targets_cpu, target_scores_cpu in train_loader:
+        anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
+        (latent1, latent2, out_scores) = model(anchors, targets)
+
+        optimizer.zero_grad()
+        
+        train_loss_score = criterion['ce'](target_scores, out_scores)
+        
+
+        label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+
+        train_loss_emb = criterion['sim'](latent1, latent2, label_type)
+
+
+        train_loss_tot = train_loss_score*criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
+        train_loss_tot.backward()
+        optimizer.step()
+            
+       
+        
+        val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
+        
+        dict_log =  {
+                    "step": it,
+                    "train/loss": train_loss_tot,
+                    "train/loss_score": train_loss_score,
+                    "train/loss_emb": train_loss_emb,
+                    "val/acc": val_metric['acc'],
+                    "val/ap":  val_metric['ap'],
+                    "val/ar":  val_metric['ar'],
+                    "val/loss": val_loss['tot'],
+                    "val/loss_score": val_loss['score'],
+                    "val/loss_emb":   val_loss['emb']
+                }
+        
+        it+=1
+        lr_scheduler.step()
+
+        wandb.log(dict_log )
+
+        run.log_code()
+
+
+
+        
+    return   it
+
+
+def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
+         criterion: Dict[str, torch.nn.Module], 
+         move_to_gpu: Callable, metric: Dict[str, Metric]=None) -> Tuple[Dict[str,torch.Tensor]]:
     """ execute a step of one epoch
 
     Args:
@@ -210,24 +290,77 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         device (torch.device):device to be used
         model (torch.nn.Module): neural network to train
         optimizer (torch.optim): optimizer to be used in training
-        lr_scheduler (torch.optim.lr_scheduler): learning rate used only for LR Range Test
-        lr_scheduler (bool): learning rate range test
+        criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
+        move_to_gpu (Callable): function used to move data from cpu to gpu
+        metric ([Dict[str, Metric]): dict of all metrics to be computed.
+
+    Returns:
+        Tuple[Dict[str,torch.Tensor]]: metrics and loss results
+    """
+    tgt_list = []
+    pred_list = []
+
+    # to reduce memory footprint
+    with torch.no_grad():
+        for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
+            anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
+            (latent1, latent2, out_scores) = model(anchors, targets)
+
+            loss_score = criterion['ce'](target_scores, out_scores)
+            
+
+            label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+
+            loss_emb = criterion['sim'](latent1, latent2, label_type)
+
+
+            loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
+
+                
+
+            
+            # one-hot encoding to spare gpu memory
+            tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.long, device=target_scores.device))
+            pred_list.append(out_scores)
+        
+    # calculate metrics
+    preds = torch.concat(pred_list)
+    tgts= torch.concat(tgt_list)
+
+    # pack results
+    res_metric = {  'ap': metric['ap'](preds, tgts),
+                    'ar':metric['ar'](preds, tgts),
+                    'acc': metric['acc'](preds, tgts)
+    }
+
+    res_loss = {'tot': loss,
+                'score':loss_score,
+                'emb': loss_emb
+            }
+        
+    return  res_loss, res_metric
+
+
+def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
+         optimizer:torch.optim,  criterion: Dict[str, torch.nn.Module], 
+         move_to_gpu: Callable) -> Dict[str,torch.Tensor]:
+    """ execute a step of one epoch
+
+    Args:
+        data_loader (DataLoader): data loader
+        device (torch.device):device to be used
+        model (torch.nn.Module): neural network to train
+        optimizer (torch.optim): optimizer to be used in training
         criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
         move_to_gpu (Callable): function used to move data from cpu to gpu
         metric (Optional[Dict[str, Metric]): dict of all metrics to be computed (only for validation set). Default None
 
     Returns:
-        Tuple[Dict[str,torch.Tensor]]: metrics and loss results
+        Dict[str,torch.Tensor]:  loss results
     """
 
-    use_metric = False if metric==None else True 
 
-    if use_metric:
-        tgt_list = []
-        pred_list = []
 
-    if lr_range_test:
-        loss_step = []
     for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
         anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
         (latent1, latent2, out_scores) = model(anchors, targets)
@@ -246,33 +379,12 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         loss.backward()
         optimizer.step()
             
-        if lr_range_test:
-            lr_scheduler.step()
-            loss_step.append(loss.item())
-        if use_metric:
-            # one-hot encoding to spare gpu memory
-            tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.long, device=target_scores.device))
-            pred_list.append(out_scores)
-
-    if use_metric:
-        # calculate metrics
-        preds = torch.concat(pred_list)
-        tgts= torch.concat(tgt_list)
-
-        # pack results
-        res_metric = {  'ap': metric['ap'](preds, tgts),
-                        'ar':metric['ar'](preds, tgts),
-                        'acc': metric['acc'](preds, tgts)
-        }
-    else:
-        res_metric = None
-
     res_loss = {'tot': loss,
                 'score':loss_score,
-                'emb': loss_emb,
-                'loss4step': loss_step}
+                'emb': loss_emb
+            }
         
-    return  res_loss, res_metric
+    return  res_loss
 
 
 
