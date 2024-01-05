@@ -64,6 +64,7 @@ class PhraseDistilBERT(nn.Module):
             self.mlp = nn.Sequential(
                     nn.Linear(pool_out*3,64),
                     nn.ReLU(), 
+                    nn.Dropout(p=0.2),
                     nn.Linear(64,32),      
                     nn.ReLU(),
                     nn.Linear(32, score_level),
