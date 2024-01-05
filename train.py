@@ -14,6 +14,7 @@ from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
 from model.phrase_distil_bert import PhraseDistilBERT
 
+import matplotlib.pyplot as plt
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -76,7 +77,12 @@ def experiment(args)->torch.float:
                              freeze_emb=args.freeze_emb, use_mlp=args.use_mlp)
     model.to(args.device)
     optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
-    lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
+
+    if args.lr_range_test:
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda epoch: epoch*2 )
+        loss_step = []
+    else:
+        lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
 
     criterion = { 'ce': BCEWithLogitsLoss(), 
                  'sim': CosineEmbeddingLoss(), 
@@ -97,9 +103,10 @@ def experiment(args)->torch.float:
 
     # configure wandb 
     if args.no_track==False:
-        wandb.login()
+        wandb.login(key=os.environ['WANDB_API_KEY'])
 
         wandb_run_name = f'SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+
 
         if args.qlora:
             wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
@@ -109,7 +116,10 @@ def experiment(args)->torch.float:
         if args.freeze_emb:
             wandb_run_name = wandb_run_name   + '_FREEZE_EMB'
         
-        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True,)  
+        if args.lr_range_test:
+            wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
+        
+        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True)  
 
         # automate the name folder
         args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
@@ -118,11 +128,14 @@ def experiment(args)->torch.float:
     model.train()
 
     best_ap = 0 
+    
     for epoch in trange(args.n_epoch):
         # step
-        train_loss, _= step(train_loader, args.device, model, optimizer, lr_scheduler, criterion, move_to_gpu=PatentCollator.move_to_gpu)
+        train_loss, _= step(train_loader, args.device, model, optimizer, lr_scheduler, args.lr_range_test, 
+                             criterion, move_to_gpu=PatentCollator.move_to_gpu)
                                                                                            
-        val_loss, val_metric   = step(val_loader, args.device, model, optimizer, lr_scheduler, criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
+        val_loss, val_metric   = step(val_loader, args.device, model, optimizer, lr_scheduler, args.lr_range_test, 
+                                      criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
         dict_log =  {
                     "epoch": epoch,
                     "train/loss": train_loss['tot'],
@@ -145,11 +158,26 @@ def experiment(args)->torch.float:
             print(dict_log)
 
         # save best weight
-        if val_metric['ap'] > best_ap:
-            best_ap = val_metric['ap']
-            save_ckpt(model, epoch, train_loss['tot'],
-                      optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
+        if args.lr_range_test:
+            loss_step.extend(val_loss['loss4step'])
+        
+        elif val_metric['ap'] > best_ap:
+                best_ap = val_metric['ap']
+                save_ckpt(model, epoch, train_loss['tot'],
+                        optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
             
+
+
+        # update scheduler
+        lr_scheduler.step()
+    
+    if args.lr_range_test:
+        plt.plot(range(len(loss_step)), loss_step)
+        plt.title('LR RangeTest')
+        plt.xlabel('Step')
+        plt.ylabel('Learning Rate')
+
+        plt.savefig(f'{args.dir}/lr_range_test.jpg')
     return val_metric['ap']
 
 def create_loader(args):
@@ -172,7 +200,7 @@ def create_loader(args):
     return train_loader,val_loader
 
 def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
+         optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler,  lr_range_test:bool,
          criterion: Dict[str, torch.nn.Module], 
          move_to_gpu: Callable, metric: Optional[Dict[str, Metric]]=None) -> Tuple[Dict[str,torch.Tensor]]:
     """ execute a step of one epoch
@@ -182,7 +210,8 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         device (torch.device):device to be used
         model (torch.nn.Module): neural network to train
         optimizer (torch.optim): optimizer to be used in training
-        lr_scheduler (torch.optim.lr_scheduler): learning rate
+        lr_scheduler (torch.optim.lr_scheduler): learning rate used only for LR Range Test
+        lr_scheduler (bool): learning rate range test
         criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
         move_to_gpu (Callable): function used to move data from cpu to gpu
         metric (Optional[Dict[str, Metric]): dict of all metrics to be computed (only for validation set). Default None
@@ -197,8 +226,9 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         tgt_list = []
         pred_list = []
 
+    if lr_range_test:
+        loss_step = []
     for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
-        # TODO: find a nicer way
         anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
         (latent1, latent2, out_scores) = model(anchors, targets)
 
@@ -216,8 +246,9 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         loss.backward()
         optimizer.step()
             
-        lr_scheduler.step()
-
+        if lr_range_test:
+            lr_scheduler.step()
+            loss_step.append(loss.item())
         if use_metric:
             # one-hot encoding to spare gpu memory
             tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.long, device=target_scores.device))
@@ -238,7 +269,8 @@ def step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
 
     res_loss = {'tot': loss,
                 'score':loss_score,
-                'emb': loss_emb}
+                'emb': loss_emb,
+                'loss4step': loss_step}
         
     return  res_loss, res_metric
 
