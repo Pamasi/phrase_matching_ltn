@@ -255,7 +255,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
         
         dict_log =  {
-                    "step": it,
+                    "lr": lr_scheduler.get_lr(),
                     "train/loss": train_loss_tot,
                     "train/loss_score": train_loss_score,
                     "train/loss_emb": train_loss_emb,
