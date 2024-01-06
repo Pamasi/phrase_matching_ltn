@@ -144,10 +144,10 @@ def experiment(args)->torch.float:
     else:
         for epoch in trange(args.n_epoch):
             # step
-            train_loss, _= step(train_loader, args.device, model, optimizer, 
+            train_loss, _= train_step(train_loader, args.device, model, optimizer, 
                                 criterion, move_to_gpu=PatentCollator.move_to_gpu)
                                                                                             
-            val_loss, val_metric   = step(val_loader, args.device, model, optimizer, lr_scheduler, False, 
+            val_loss, val_metric   = val_step(val_loader, args.device, model, optimizer, lr_scheduler, False, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
             dict_log =  {
                         "epoch": epoch,
