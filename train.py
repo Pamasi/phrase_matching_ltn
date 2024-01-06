@@ -76,7 +76,11 @@ def experiment(args)->torch.float:
     model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, 
                              freeze_emb=args.freeze_emb, use_mlp=args.use_mlp)
     model.to(args.device)
-    optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
+
+    if args.use_sgd:
+        optimizer = torch.optim.SGD(params =  model.parameters(), lr=args.lr)
+    else:
+        optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
 
     if args.lr_range_test:
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: step*2 )
@@ -115,6 +119,11 @@ def experiment(args)->torch.float:
             wandb_run_name = wandb_run_name   + '_MLP'
         if args.freeze_emb:
             wandb_run_name = wandb_run_name   + '_FREEZE_EMB'
+
+        if args.use_sgd:
+            wandb_run_name = wandb_run_name   + '_SGD'
+        else:
+            wandb_run_name = wandb_run_name   + '_ADAM'
         
         if args.lr_range_test:
             wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
