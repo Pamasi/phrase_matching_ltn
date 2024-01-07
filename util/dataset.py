@@ -121,6 +121,8 @@ class PatentDataset(Dataset):
 
         w_tag = pos_info[idx][1]
         tok = pos_info[idx][0]
+
+        synset = None
         if  w_tag in adj:
             synset = wn.synsets(tok, pos=wn.ADJ)
         elif w_tag in noun:
@@ -128,15 +130,22 @@ class PatentDataset(Dataset):
         elif w_tag in verb:
             synset = wn.synsets(tok, pos=wn.VERB)
 
+        target_synomym = target_phrase
 
-        lemma = [ l.name() for s in synset for l in s.lemmas() ]
+        # handle corner cases
+        if synset is not None:
+            lemma = [ l.name() for s in synset for l in s.lemmas() ]
 
-        idx_lemma = random.randint(0,len(lemma)-1)
+            if len(lemma) > 0:
+                idx_lemma = random.randint(0,len(lemma)-1)
 
-        tok_list[idx] = lemma[idx_lemma]
+                tok_list[idx] = lemma[idx_lemma]
 
+                target_synomym = ' '.join(tok_list)
 
-        target_synomym = ' '.join(tok_list)
+    
+           
+
 
         return target_synomym
     
