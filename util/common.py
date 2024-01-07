@@ -30,6 +30,7 @@ def get_args_parser():
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
     parser.add_argument('--score_weight', default=10, type=float, help='score loss weight')
     parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
+    parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--seed', default=23, type=int, help='seed')
     parser.add_argument('--p_syn', default=0.5, type=float, help='probability of changing POS in a phrase')
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')

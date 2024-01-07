@@ -86,7 +86,8 @@ def experiment(args)->torch.float:
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: step*2 )
         loss_step = []
     else:
-        lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=args.c_lr_min, max_lr=args.c_lr_max, cycle_momentum=False)
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
+                                                         epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
 
     criterion = { 'ce': BCEWithLogitsLoss(), 
                  'sim': CosineEmbeddingLoss(), 
@@ -153,13 +154,13 @@ def experiment(args)->torch.float:
     else:
         for epoch in trange(args.n_epoch):
             # step
-            train_loss, _= train_step(train_loader, args.device, model, optimizer, 
+            train_loss= train_step(train_loader, args.device, model, optimizer, 
                                 criterion, move_to_gpu=PatentCollator.move_to_gpu)
                                                                                             
-            val_loss, val_metric   = val_step(val_loader, args.device, model, optimizer, lr_scheduler, False, 
+            val_loss, val_metric   = val_step(val_loader, args.device, model, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
             dict_log =  {
-                        "epoch": epoch,
+                        #"epoch": epoch,
                         "train/loss": train_loss['tot'],
                         "train/loss_score": train_loss['score'],
                         "train/loss_emb": train_loss['emb'],
@@ -263,9 +264,8 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         
         val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
         
-        print(lr_scheduler.get_last_lr())
         dict_log =  {
-                    "lr": lr_scheduler.get_last_lr()[0],
+                    "lr": float(lr_scheduler.get_last_lr()[0]),
                     "train/loss": train_loss_tot,
                     "train/loss_score": train_loss_score,
                     "train/loss_emb": train_loss_emb,
