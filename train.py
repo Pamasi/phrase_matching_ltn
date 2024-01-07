@@ -110,7 +110,7 @@ def experiment(args)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+        wandb_run_name = f'L1_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
         if args.qlora:
@@ -160,7 +160,7 @@ def experiment(args)->torch.float:
             val_loss, val_metric   = val_step(val_loader, args.device, model, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
             dict_log =  {
-                        #"epoch": epoch,
+                        "lr": lr_scheduler.get_last_lr()[0],
                         "train/loss": train_loss['tot'],
                         "train/loss_score": train_loss['score'],
                         "train/loss_emb": train_loss['emb'],
@@ -265,7 +265,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
         
         dict_log =  {
-                    "lr": float(lr_scheduler.get_last_lr()[0]),
+                    "lr": lr_scheduler.get_last_lr()[0],
                     "train/loss": train_loss_tot,
                     "train/loss_score": train_loss_score,
                     "train/loss_emb": train_loss_emb,
@@ -316,7 +316,7 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
             anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
             (latent1, latent2, out_scores) = model(anchors, targets)
 
-            loss_score = criterion['ce'](target_scores, out_scores)
+            loss_score = criterion['ce'](out_scores, target_scores)
             
 
             label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
@@ -377,7 +377,7 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
 
         optimizer.zero_grad()
         
-        loss_score = criterion['ce'](target_scores, out_scores)
+        loss_score = criterion['ce'](out_scores, target_scores )
         
 
         label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)

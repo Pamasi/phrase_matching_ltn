@@ -129,7 +129,7 @@ class PatentDataset(Dataset):
             synset = wn.synsets(tok, pos=wn.VERB)
 
 
-        lemma = [ l.name() for s in wn.synsets('mixing', pos=wn.VERB) for l in s.lemmas() ]
+        lemma = [ l.name() for s in synset for l in s.lemmas() ]
 
         idx_lemma = random.randint(0,len(lemma)-1)
 
