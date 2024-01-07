@@ -122,6 +122,7 @@ This is an example of how you may give instructions on setting up your project l
 ## Roadmap
 
 - [X] Train the base model
+- [ ] Implemented Contrastive Learning for the base model
 - [ ] Integration of neuro-symbolic AI:
     - use synonym as logical rules:
         - Forall <x,y> IsSyn(x,y) =>IsScore(x, 0.25)
