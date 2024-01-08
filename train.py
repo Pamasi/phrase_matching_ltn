@@ -248,7 +248,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
 
         optimizer.zero_grad()
         
-        train_loss_score = criterion['ce'](target_scores, out_scores)
+        train_loss_score = criterion['ce'](out_scores, target_scores)
         
 
         label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
