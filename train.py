@@ -1,8 +1,9 @@
 import argparse, os
 import torch
 from torch.utils.data import DataLoader
-from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss
-from transformers import DistilBertTokenizerFast
+from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, L1Loss
+from flash.core.optimizers import LAMB
+from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, get_linear_schedule_with_warmup
 from tqdm import trange
 from typing import Dict, Optional, Tuple, Callable
 import wandb
@@ -12,7 +13,7 @@ from torchmetrics import Metric
 import optuna
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
-from model.phrase_distil_bert import PhraseDistilBERT
+from model.phrase_encoder import PhraseEncoder
 
 import matplotlib.pyplot as plt
 
@@ -73,23 +74,29 @@ def experiment(args)->torch.float:
 
     train_loader, val_loader = create_loader(args)
     
-    model = PhraseDistilBERT(args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, 
+    model = PhraseEncoder(args.model_name, args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, 
                              freeze_emb=args.freeze_emb, use_mlp=args.use_mlp)
     model.to(args.device)
 
     if args.use_sgd:
         optimizer = torch.optim.SGD(params =  model.parameters(), lr=args.lr)
+    elif args.use_lamb:
+        optimizer = LAMB(model.parameters(), lr=args.lr, eps=1e-12)
     else:
-        optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr)
+        optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr, eps=1e-12)
 
     if args.lr_range_test:
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: step*2 )
         loss_step = []
+    elif args.use_linear_scheduler:
+        lr_scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=0,
+                                                num_training_steps=args.n_epoch*args.step_epoch)
     else:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
                                                          epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
 
-    criterion = { 'ce': BCEWithLogitsLoss(), 
+    criterion = { 'ce': L1Loss(), 
                  'sim': CosineEmbeddingLoss(), 
                  'emb_weight':args.emb_weight,
                  'score_weight':args.score_weight}
@@ -135,7 +142,6 @@ def experiment(args)->torch.float:
         args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
 
 
-    model.train()
 
     best_ap = 0 
         
@@ -154,8 +160,8 @@ def experiment(args)->torch.float:
     else:
         for epoch in trange(args.n_epoch):
             # step
-            train_loss= train_step(train_loader, args.device, model, optimizer, 
-                                criterion, move_to_gpu=PatentCollator.move_to_gpu)
+            train_loss= train_step(train_loader, args.device, model, lr_scheduler, optimizer, 
+                                criterion, move_to_gpu=PatentCollator.move_to_gpu, max_norm=args.clip_norm)
                                                                                             
             val_loss, val_metric   = val_step(val_loader, args.device, model, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
@@ -192,15 +198,19 @@ def experiment(args)->torch.float:
                             optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
                 
 
-
             # update scheduler
             lr_scheduler.step()
+
 
     return val_metric['ap']
 
 def create_loader(args):
-    tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
-    
+
+    if args.model_name=='distilbert-base-uncased':
+        tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
+    elif args.model_name=='google/electra-small-discriminator':
+        tokenizer =  ElectraTokenizerFast.from_pretrained('google/electra-small-discriminator', truncation=True, do_lower_case=True)
+
     path_train =  os.path.join(os.getcwd(), args.path_train)
     path_val =  os.path.join(os.getcwd(), args.path_val)
     
@@ -240,6 +250,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
     Returns:
         int: last iteration
     """
+    
 
 
     for anchors_cpu, targets_cpu, target_scores_cpu in train_loader:
@@ -257,6 +268,8 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
 
 
         train_loss_tot = train_loss_score*criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
+
+        batch_loss += train_loss_tot
         train_loss_tot.backward()
         optimizer.step()
             
@@ -278,7 +291,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
                 }
         
         it+=1
-        lr_scheduler.step()
+       
 
         wandb.log(dict_log )
 
@@ -309,23 +322,30 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
     """
     tgt_list = []
     pred_list = []
+    batch_loss_tot = 0.0
+    batch_loss_score = 0.0
+    batch_loss_emb = 0.0
+    n_batch = len(data_loader)
 
+    model.eval() 
     # to reduce memory footprint
     with torch.no_grad():
         for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
             anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
+           
             (latent1, latent2, out_scores) = model(anchors, targets)
 
             loss_score = criterion['ce'](out_scores, target_scores)
-            
+            batch_loss_score += loss_score
 
             label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
 
             loss_emb = criterion['sim'](latent1, latent2, label_type)
+            batch_loss_emb += loss_emb
 
 
             loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
-
+            batch_loss_tot += loss
                 
 
             
@@ -343,17 +363,18 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
                     'acc': metric['acc'](preds, tgts)
     }
 
-    res_loss = {'tot': loss,
-                'score':loss_score,
-                'emb': loss_emb
+    res_loss = {'tot': batch_loss_tot/n_batch,
+                'score':batch_loss_score/n_batch,
+                'emb': batch_loss_emb/n_batch
             }
         
     return  res_loss, res_metric
 
 
 def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         optimizer:torch.optim,  criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable) -> Dict[str,torch.Tensor]:
+               lr_scheduler:torch.optim.lr_scheduler,
+         optimizer:torch.optim, criterion: Dict[str, torch.nn.Module], 
+         move_to_gpu: Callable, max_norm:float=0.1) -> Dict[str,torch.Tensor]:
     """ execute a step of one epoch
 
     Args:
@@ -368,7 +389,13 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
     Returns:
         Dict[str,torch.Tensor]:  loss results
     """
+    
+    batch_loss_tot = 0.0
+    batch_loss_score = 0.0
+    batch_loss_emb = 0.0
+    n_batch = len(data_loader)
 
+    model.train()
 
 
     for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
@@ -378,20 +405,29 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         optimizer.zero_grad()
         
         loss_score = criterion['ce'](out_scores, target_scores )
+        batch_loss_score += loss_score
+
+
         
 
         label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
 
         loss_emb = criterion['sim'](latent1, latent2, label_type)
-
+        batch_loss_emb += loss_emb
 
         loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
+        batch_loss_tot += loss
+
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         optimizer.step()
-            
-    res_loss = {'tot': loss,
-                'score':loss_score,
-                'emb': loss_emb
+        lr_scheduler.step()
+
+
+    res_loss = {'tot': batch_loss_tot/n_batch,
+                'score':batch_loss_score/n_batch,
+                'emb': batch_loss_emb/n_batch
             }
         
     return  res_loss
