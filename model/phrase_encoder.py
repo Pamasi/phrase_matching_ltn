@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import DistilBertModel
+from transformers import DistilBertModel, ElectraModel
 from peft import LoraConfig, get_peft_model, PeftModel
 
 
@@ -20,11 +20,12 @@ def qlora_mode(base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
 
     return peft_model
 
-class PhraseDistilBERT(nn.Module):
-    def __init__(self, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
+class PhraseEncoder(nn.Module):
+    def __init__(self, model_name:str, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
                  qlora_rank:int=1, qlora_alpha:int=1, freeze_emb:bool=False, use_mlp:bool=True):
         """_summary_
         Args:
+            model_name (str): name of the model
             score_level (int, optional): number of score . Defaults to 5.
             pool_out (int, optional): pooling output dimension of the hidden layer from bert. Defaults to 256.
             use_qlora (bool, optional): use QLoRa. Defaults to True.
@@ -34,16 +35,20 @@ class PhraseDistilBERT(nn.Module):
             use_mlp (bool, optional): use a MLP instead of a non-linear matrix projection. Defaults to True
         """
 
-        super(PhraseDistilBERT, self).__init__()
+        super(PhraseEncoder, self).__init__()
 
+        if model_name=='distilbert-base-uncased':
+            model = DistilBertModel
+        elif model_name=='google/electra-small-discriminator':
+            model = ElectraModel
         if use_qlora:
             print(f'QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
-            self.emb1= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
-            self.emb2= qlora_mode(DistilBertModel.from_pretrained("distilbert-base-uncased"), qlora_rank, qlora_alpha)
+            self.emb1= qlora_mode(model.from_pretrained(model_name), qlora_rank, qlora_alpha)
+            self.emb2= qlora_mode(model.from_pretrained(model_name), qlora_rank, qlora_alpha)
 
         else:
-            self.emb1= DistilBertModel.from_pretrained("distilbert-base-uncased")
-            self.emb2= DistilBertModel.from_pretrained("distilbert-base-uncased")
+            self.emb1= model.from_pretrained(model_name)
+            self.emb2= model.from_pretrained(model_name)
 
 
         if freeze_emb:
@@ -63,9 +68,11 @@ class PhraseDistilBERT(nn.Module):
         if self.use_mlp==True:
             self.mlp = nn.Sequential(
                     nn.Linear(pool_out*3,64),
+                    nn.BatchNorm1d(64),
                     nn.ReLU(), 
                     nn.Dropout(p=0.2),
-                    nn.Linear(64,32),      
+                    nn.Linear(64,32),  
+                    nn.BatchNorm1d(32),
                     nn.ReLU(),
                     nn.Linear(32, score_level),
                     nn.ReLU()

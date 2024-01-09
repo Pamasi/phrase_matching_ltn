@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 from typing import Dict, List, Tuple
 from torch.utils.data import Dataset
-from transformers import DistilBertTokenizerFast
+from transformers import  PreTrainedTokenizerFast
 # from transformers import  GPT2LMHeadModel, GPT2Tokenizer, pipeline
 import nltk
 from nltk.corpus import wordnet as wn
@@ -18,13 +18,13 @@ class PatentDataset(Dataset):
         Dataset (torch.Dataset): encapsulate the Patent file into a torch Dataset 
     """
 
-    def __init__(self, path:str, tokenizer:DistilBertTokenizerFast, max_len:int, seed:int,is_val:bool=False,
+    def __init__(self, path:str, tokenizer:PreTrainedTokenizerFast, max_len:int, seed:int,is_val:bool=False,
                  p_syn:float=0.5):
         """ create a PatentDataset object
 
         Args:
             path (str): path of the dataset
-            tokenizer (DistilBertTokenizerFast): tokenizer
+            tokenizer (PretrainedTokenizerFast): tokenizer
             max_len (int): max lenght of a sentence
             seed (int): seed of the random generator
             is_val (bool): is validation set. Defaults False
@@ -50,7 +50,7 @@ class PatentDataset(Dataset):
         nltk.download('averaged_perceptron_tagger')
 
         self.is_val=is_val
-        self.p_syn=0.5
+        self.p_syn=p_syn
     
 
     def _process(self, raw_data:pd.DataFrame):
@@ -61,7 +61,7 @@ class PatentDataset(Dataset):
         """
         
         # save only relevant data
-        raw_data['anchor_context'] = raw_data.apply(lambda row: row['anchor']+ ';'+ row['context'], axis=1)
+        raw_data['anchor_context'] = raw_data.apply(lambda row: row['anchor']+ ' [SEP] '+ row['context'], axis=1)
         self.data = raw_data[['anchor_context', 'target', 'score']]
         
         
@@ -156,9 +156,9 @@ class PatentDataset(Dataset):
         anchor_text = " ".join(anchor_text.split())
         
         target_text = self.data['target'][index]
-        anchor_text = " ".join(anchor_text.split())
 
-        if self.is_val==False and random.random() > self.p_syn:
+
+        if self.is_val==False and random.random() < self.p_syn:
             target_text = self.__sub_synomyn(target_text)
 
         target_text = " ".join(target_text.split())       
