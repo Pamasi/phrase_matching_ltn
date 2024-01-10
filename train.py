@@ -130,6 +130,8 @@ def experiment(args)->torch.float:
 
         if args.use_sgd:
             wandb_run_name = wandb_run_name   + '_SGD'
+        elif args.use_lamb:
+            wandb_run_name = wandb_run_name   + '_LAMB'
         else:
             wandb_run_name = wandb_run_name   + '_ADAM'
         
