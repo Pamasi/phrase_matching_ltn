@@ -123,8 +123,17 @@ def experiment(args)->torch.float:
         if args.qlora:
             wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
         
+
+                    
+        if args.model_name.find('distilbert')>0:
+            wandb_run_name = wandb_run_name   + '_DISTILBERT'
+        elif args.model_name.find('electra')>0:
+            wandb_run_name = wandb_run_name   + '_ELECTRA'
+
         if args.use_mlp:
             wandb_run_name = wandb_run_name   + '_MLP'
+        elif args.use_gru:
+            wandb_run_name = wandb_run_name   + '_GRU'
         if args.freeze_emb:
             wandb_run_name = wandb_run_name   + '_FREEZE_EMB'
 
@@ -134,7 +143,8 @@ def experiment(args)->torch.float:
             wandb_run_name = wandb_run_name   + '_LAMB'
         else:
             wandb_run_name = wandb_run_name   + '_ADAM'
-        
+
+
         if args.lr_range_test:
             wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
         
@@ -208,10 +218,10 @@ def experiment(args)->torch.float:
 
 def create_loader(args):
 
-    if args.model_name=='distilbert-base-uncased':
-        tokenizer =  DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True)
-    elif args.model_name=='google/electra-small-discriminator':
-        tokenizer =  ElectraTokenizerFast.from_pretrained('google/electra-small-discriminator', truncation=True, do_lower_case=True)
+    if args.model_name.find('distilbert')>0:
+        tokenizer =  DistilBertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('electra')>0:
+        tokenizer =  ElectraTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
 
     path_train =  os.path.join(os.getcwd(), args.path_train)
     path_val =  os.path.join(os.getcwd(), args.path_val)

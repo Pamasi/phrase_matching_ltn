@@ -39,6 +39,7 @@ def get_args_parser():
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
     parser.add_argument('--optuna', action='store_true', help='use optuna to select hyperparameters')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
+    parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
     parser.add_argument('--lr_range_test', action='store_true', help='Perform LR Range Test')
     parser.add_argument('--use_sgd', action='store_true', help='use SDG Optmizer')
