@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, L1Loss
 from flash.core.optimizers import LAMB
-from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, get_linear_schedule_with_warmup
+from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, AlbertTokenizerFast,get_linear_schedule_with_warmup
 from tqdm import trange
 from typing import Dict, Optional, Tuple, Callable
 import wandb
@@ -125,11 +125,12 @@ def experiment(args)->torch.float:
         
 
                     
-        if args.model_name.find('distilbert')>0:
+        if args.model_name.find('distilbert')>=0:
             wandb_run_name = wandb_run_name   + '_DISTILBERT'
-        elif args.model_name.find('electra')>0:
+        elif args.model_name.find('electra')>=0:
             wandb_run_name = wandb_run_name   + '_ELECTRA'
-
+        elif args.model_name.find('albert')>=0:
+            wandb_run_name = wandb_run_name   + '_ALBERT'
         if args.use_mlp:
             wandb_run_name = wandb_run_name   + '_MLP'
         elif args.use_gru:
@@ -217,11 +218,13 @@ def experiment(args)->torch.float:
     return val_metric['ap']
 
 def create_loader(args):
-
+    print(args.model_name)
     if args.model_name.find('distilbert')>0:
         tokenizer =  DistilBertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
     elif args.model_name.find('electra')>0:
         tokenizer =  ElectraTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('albert')>=0:
+        tokenizer =  AlbertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
 
     path_train =  os.path.join(os.getcwd(), args.path_train)
     path_val =  os.path.join(os.getcwd(), args.path_val)

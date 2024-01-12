@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import DistilBertModel, ElectraModel
+from transformers import DistilBertModel, ElectraModel, AlbertModel
 from peft import LoraConfig, get_peft_model, PeftModel
 
 
@@ -12,9 +12,9 @@ from typing import Dict, Tuple
 def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
 
     print(model_name)
-    if model_name.find('distilbert')>0:
+    if model_name.find('distilbert')>=0:
         target_modules=['q_lin', 'k_lin', 'v_lin']
-    elif model_name.find('electra')>0:
+    elif model_name.find('electra')>=0 or model_name.find('albert')>=0:
         target_modules=['query', 'key', 'value']
     else:
         raise ValueError(f'{model_name} is an invalid name')
@@ -50,10 +50,14 @@ class PhraseEncoder(nn.Module):
 
         super(PhraseEncoder, self).__init__()
 
-        if model_name.find('distilbert')>0:
+        if model_name.find('distilbert')>=0:
             model = DistilBertModel
-        elif model_name.find('electra')>0:
+        elif model_name.find('electra')>=0:
             model = ElectraModel
+        elif model_name.find('albert')>=0:
+            model = AlbertModel
+        else:
+            raise ValueError(f'{model_name} is unvalid model name')
         if use_qlora:
             print(f'QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
             self.emb1= qlora_mode(model_name,model.from_pretrained(model_name), qlora_rank, qlora_alpha)
