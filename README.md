@@ -94,9 +94,9 @@ This is an example of how you may give instructions on setting up your project l
 ### Installation
 
 1. Install python 
-3. Create  a python enviroment called phrase_matching_ltn
+3. Create  a python enviroment called phrase_ltn
    ```sh
-   conda create phrase_matching ltn
+   conda create phrase_ltn
    ```
 2. Install the requirements
    ```sh
