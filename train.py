@@ -1,4 +1,4 @@
-import argparse, os
+import argparse, os, sys, logging
 import torch
 from torch.utils.data import DataLoader
 from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, L1Loss
@@ -31,20 +31,10 @@ os.environ["WANDB_START_METHOD"] = "thread"
 class Objective:
     """object function for hyperparameters search
     """
-    def __init__(self, lora_rank_range:Tuple[int],
-                    lora_alpha_range:Tuple[int],
-                    lr_range:Tuple[float],
-                    score_weight_range: Tuple[float],
+    def __init__(self, score_weight_range: Tuple[float],
                     emb_weight_range: Tuple[float],
                     args:argparse.ArgumentParser):
 
-        self.rank_min = lora_rank_range[0]
-        self.rank_max = lora_rank_range[1]
-        self.alpha_min = lora_alpha_range[0]
-        self.alpha_max = lora_alpha_range[1] 
-        
-        self.lr_min = lr_range[0]
-        self.lr_max = lr_range[1]
 
         self.sw_r_min = score_weight_range[0]
         self.sw_r_max = score_weight_range[1]
@@ -56,20 +46,17 @@ class Objective:
 
     def __call__(self, trial):
 
-        #self.args.qlora = trial.suggest_int("qlora_rank", self.rank_min, self.rank_max)
-        #self.args.qlora_alpha = trial.suggest_int("qlora_alpha", self.alpha_min, self.alpha_max)
 
-        self.args.emb_weight = trial.suggest_float("score_weight_loss", self.sw_r_min, self.sw_r_max)
-        self.args.score_weight = trial.suggest_float("emb_weight_loss", self.ew_r_min, self.ew_r_max)
-        self.args.lr = trial.suggest_float("lr", self.lr_min, self.lr_max)
+        self.args.emb_weight = trial.suggest_int("score_weight_loss", self.sw_r_min, self.sw_r_max)
+        self.args.score_weight = trial.suggest_int("emb_weight_loss", self.ew_r_min, self.ew_r_max)
 
 
       
-        return experiment(args)
+        return experiment(args, trial=trial)
 
 
 
-def experiment(args)->torch.float:
+def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
  
 
     train_loader, val_loader = create_loader(args)
@@ -96,7 +83,7 @@ def experiment(args)->torch.float:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
                                                          epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
 
-    criterion = { 'ce': L1Loss(), 
+    criterion = { 'ce': BCEWithLogitsLoss(), 
                  'sim': CosineEmbeddingLoss(), 
                  'emb_weight':args.emb_weight,
                  'score_weight':args.score_weight}
@@ -117,7 +104,7 @@ def experiment(args)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'L1_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+        wandb_run_name = f'BCE_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
         if args.qlora:
@@ -214,12 +201,18 @@ def experiment(args)->torch.float:
             # update scheduler
             lr_scheduler.step()
 
+            if args.use_optune:
+                trial.report(val_metric['acc'], epoch)
 
-    return val_metric['ap']
+                # Handle pruning based on the intermediate value.
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
+    return val_metric['acc']
 
 def create_loader(args):
     print(args.model_name)
-    if args.model_name.find('distilbert')>0:
+    if args.model_name.find('distilbert')>=0:
         tokenizer =  DistilBertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
     elif args.model_name.find('electra')>0:
         tokenizer =  ElectraTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
@@ -453,14 +446,19 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('DistilledBERT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
 
-    if args.optuna:
-        objective = Objective(lora_rank_range=(32,32), lora_alpha_range= (32,32), lr_range=(2e-6, 2e-4),score_weight_range= (0.1, 8),emb_weight_range= (0.1,8), args=args)
+    if args.use_optuna:
+
+        objective = Objective(score_weight_range= (args.sw_low_bound, args.sw_high_bound),emb_weight_range= (args.ew_low_bound, args.ew_high_bound), args=args)
+        optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+        
         study = optuna.create_study(
             direction="maximize",
-            study_name="NAS",
-            pruner=optuna.pruners.MedianPruner()
+            study_name="Weights' losses",
+            sampler=optuna.samplers.RandomSampler(),
+            pruner=optuna.pruners.HyperbandPruner(),
         )
-        study.optimize(objective, n_trials=10)
+        
+        study.optimize(objective, n_trials=args.optuna_trial)
 
     else:
         experiment(args)

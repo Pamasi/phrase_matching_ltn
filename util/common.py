@@ -11,40 +11,63 @@ from typing import Any,Optional, Union
 def get_args_parser():
     parser = argparse.ArgumentParser('Set DistilledBert', add_help=False)
     
+    # data
+    parser.add_argument('--dir', default='debug', type=str, help='directory of checkpoints')
     parser.add_argument('--path_train', default='data/processed/train.csv', type=str,
                         help="data path of train set")
     parser.add_argument('--path_val', default='data/processed/val.csv', type=str,
                         help="data path of val set")
+    
+    # network
     parser.add_argument('--max_len', default=120, type=int, help='max length of the tokenizer')
     parser.add_argument('--qlora', action='store_true', help='use qlora')
     parser.add_argument('--qlora_rank', default=32, type=int, help='rank used in qlora')
     parser.add_argument('--qlora_alpha', default=32, type=int, help='gain used in qlora')
+    parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
+    parser.add_argument('--use_mlp', action='store_true', help='use MLP')
+    parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
+
+    # config
     parser.add_argument('--batch', default=32, type=int, help='batch size')
     parser.add_argument('--num_workers', default=2, type=int, help='number of workers')
     parser.add_argument('--score_level', default=5, type=int, help='level of scores')
     parser.add_argument('--device', default='cuda', type=str, help='device used to train')
     parser.add_argument('--model_name', default='distilbert-base-uncased', type=str, help='name of the encoder model')
+
+    # hyperparam
+    parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
     parser.add_argument('--lr', default=2e-5, type=float)
     parser.add_argument('--use_linear_scheduler', action="store_true", help='use a linear scheduler')
     parser.add_argument('--c_lr_min', default=5e-6, type=float)
     parser.add_argument('--c_lr_max', default=5e-5, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
+    parser.add_argument("--cls_loss", default='BCE',type=str, choices=['BCE','L1'])
     parser.add_argument('--clip_norm', default=0.1, type=float, help="max possible norm before clipping procedure")
+    parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
     parser.add_argument('--score_weight', default=10, type=float, help='score loss weight')
-    parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
-    parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
-    parser.add_argument('--seed', default=23, type=int, help='seed')
     parser.add_argument('--p_syn', default=0.1, type=float, help='probability of changing POS in a phrase')
-    parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
-    parser.add_argument('--optuna', action='store_true', help='use optuna to select hyperparameters')
-    parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
-    parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
-    parser.add_argument('--use_mlp', action='store_true', help='use MLP')
-    parser.add_argument('--lr_range_test', action='store_true', help='Perform LR Range Test')
     parser.add_argument('--use_sgd', action='store_true', help='use SDG Optmizer')
     parser.add_argument('--use_lamb', action='store_true', help='use LAMB Optimizer')
-    parser.add_argument('--dir', default='debug', type=str, help='directory of checkpoints')
+
+    
+    # technicality 
+    parser.add_argument('--seed', default=23, type=int, help='seed')
+    parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
+
+    # range test
+    parser.add_argument('--lr_range_test', action='store_true', help='Perform LR Range Test')
+
+
+    # optuna
+    parser.add_argument('--use_optuna', action='store_true', help='use optuna to select hyperparameters')
+    parser.add_argument('--optuna_trial', default=10, type=int, help='number of trial per study')
+    parser.add_argument('--sw_low_bound',  type=int, help='low bound for the score weight loss')
+    parser.add_argument('--sw_high_bound',  type=int, help='high bound for the score weight loss')
+    parser.add_argument('--ew_low_bound',  type=int, help='low bound for the embedding weight loss')
+    parser.add_argument('--ew_high_bound',  type=int, help='high bound for the embedding weight loss')
+
+
     return parser
 
 
