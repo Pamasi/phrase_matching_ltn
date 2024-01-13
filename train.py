@@ -201,7 +201,7 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
             # update scheduler
             lr_scheduler.step()
 
-            if args.use_optune:
+            if args.use_optuna:
                 trial.report(val_metric['acc'], epoch)
 
                 # Handle pruning based on the intermediate value.
