@@ -198,9 +198,6 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
                             optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
                 
 
-            # update scheduler
-            lr_scheduler.step()
-
             if args.use_optuna:
                 trial.report(val_metric['acc'], epoch)
 
