@@ -208,7 +208,8 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
     return val_metric['acc']
 
 def create_loader(args):
-    print(args.model_name)
+    print(f'model name ={args.model_name}')
+
     if args.model_name.find('distilbert')>=0:
         tokenizer =  DistilBertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
     elif args.model_name.find('electra')>0:

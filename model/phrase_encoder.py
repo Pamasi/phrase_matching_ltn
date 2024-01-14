@@ -10,14 +10,13 @@ from typing import Dict, Tuple
 
 
 def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
-
-    print(model_name)
     if model_name.find('distilbert')>=0:
         target_modules=['q_lin', 'k_lin', 'v_lin']
     elif model_name.find('electra')>=0 or model_name.find('albert')>=0:
         target_modules=['query', 'key', 'value']
     else:
         raise ValueError(f'{model_name} is an invalid name')
+    
     # set 4bit quantization
     lora_config = LoraConfig(r=rank, 
                              lora_alpha=alpha, 
