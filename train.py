@@ -183,7 +183,7 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
             val_loss, val_metric   = val_step(val_loader, args.device, model, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
             dict_log =  {
-                        "lr": lr_scheduler.get_last_lr()[0],
+                        "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
                         "train/loss": train_loss['tot'],
                         "train/loss_score": train_loss['score'],
                         "train/loss_emb": train_loss['emb'],
