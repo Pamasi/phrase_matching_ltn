@@ -81,6 +81,8 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
         lr_scheduler = get_linear_schedule_with_warmup(optimizer,
                                                 num_warmup_steps=0,
                                                 num_training_steps=args.n_epoch*args.step_epoch)
+    elif args.no_scheduler:
+        lr_scheduler = None
     else:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
                                                          epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
@@ -157,7 +159,12 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
         
     if args.lr_range_test:
         it =0 
+
+        if lr_scheduler is None:
+            raise ValueError('Learning rate scheduler cannot be None')
+        
         for epoch in trange(args.n_epoch):
+            
             it = lr_range_test(it, train_loader, val_loader, args.device, model, optimizer, lr_scheduler,
                                 criterion, move_to_gpu=PatentCollator.move_to_gpu, run=run, metric=metric)
         # plt.plot(range(len(loss_step)), loss_step)
@@ -170,8 +177,8 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
     else:
         for epoch in trange(args.n_epoch):
             # step
-            train_loss= train_step(train_loader, args.device, model, lr_scheduler, optimizer, 
-                                criterion, move_to_gpu=PatentCollator.move_to_gpu, max_norm=args.clip_norm)
+            train_loss= train_step(train_loader, args.device, model, optimizer, 
+                                criterion, lr_scheduler=lr_scheduler, move_to_gpu=PatentCollator.move_to_gpu, max_norm=args.clip_norm)
                                                                                             
             val_loss, val_metric   = val_step(val_loader, args.device, model, 
                                         criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
@@ -388,9 +395,10 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
 
 
 def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-               lr_scheduler:torch.optim.lr_scheduler,
          optimizer:torch.optim, criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable, max_norm:float=0.1) -> Dict[str,torch.Tensor]:
+         move_to_gpu: Callable,
+         lr_scheduler:Optional[torch.optim.lr_scheduler.LRScheduler]=None,
+          max_norm:float=0.1) -> Dict[str,torch.Tensor]:
     """ execute a step of one epoch
 
     Args:
@@ -398,9 +406,10 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         device (torch.device):device to be used
         model (torch.nn.Module): neural network to train
         optimizer (torch.optim): optimizer to be used in training
-        criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
         move_to_gpu (Callable): function used to move data from cpu to gpu
-        metric (Optional[Dict[str, Metric]): dict of all metrics to be computed (only for validation set). Default None
+        criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
+        lr_scheduler (Optional[torch.optim.lr_scheduler.LRScheduler]): scheduler of the learning rate. Default to None
+        max_norm (float): gradient clipping norm. Default to 0.1
 
     Returns:
         Dict[str,torch.Tensor]:  loss results
@@ -438,7 +447,9 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
         optimizer.step()
-        lr_scheduler.step()
+
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
 
     res_loss = {'tot': batch_loss_tot/n_batch,

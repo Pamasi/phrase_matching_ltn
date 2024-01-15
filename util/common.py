@@ -39,7 +39,8 @@ def get_args_parser():
     # hyperparam
     parser.add_argument('--n_epoch', default=30, type=int, help='number of epochs')
     parser.add_argument('--lr', default=2e-5, type=float)
-    parser.add_argument('--use_linear_scheduler', action="store_true", help='use a linear scheduler')
+    parser.add_argument('--no_scheduler', action='store_true', help='do not use the scheduler')
+    parser.add_argument('--use_linear_scheduler', action='store_true', help='use a linear scheduler')
     parser.add_argument('--c_lr_min', default=5e-6, type=float)
     parser.add_argument('--c_lr_max', default=5e-5, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
