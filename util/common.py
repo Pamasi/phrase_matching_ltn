@@ -21,11 +21,13 @@ def get_args_parser():
     # network
     parser.add_argument('--max_len', default=120, type=int, help='max length of the tokenizer')
     parser.add_argument('--qlora', action='store_true', help='use qlora')
+    parser.add_argument('--qlora_last_layer', action='store_true', help='apply qlora only to the last layer instead of all')
     parser.add_argument('--qlora_rank', default=32, type=int, help='rank used in qlora')
     parser.add_argument('--qlora_alpha', default=32, type=int, help='gain used in qlora')
     parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
+
 
     # config
     parser.add_argument('--batch', default=32, type=int, help='batch size')

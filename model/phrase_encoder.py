@@ -9,7 +9,7 @@ import math
 from typing import Dict, Tuple
 
 
-def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int) -> PeftModel:
+def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int, only_last:bool) -> PeftModel:
     if model_name.find('distilbert')>=0:
         target_modules=['q_lin', 'k_lin', 'v_lin']
     elif model_name.find('electra')>=0 or model_name.find('albert')>=0:
@@ -18,18 +18,27 @@ def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int) -> Pef
         raise ValueError(f'{model_name} is an invalid name')
     
     # set 4bit quantization
-    lora_config = LoraConfig(r=rank, 
-                             lora_alpha=alpha, 
-                            target_modules=target_modules,
-                            init_lora_weights="loftq")
-    
+    if only_last:
+        print('Apply QLoRa to the last layer')
+        lora_config = LoraConfig(r=rank,  lora_alpha=alpha,
+                                layers_to_transform =[5],
+                                target_modules=target_modules,
+                                init_lora_weights="loftq")
+        
+    else:
+        lora_config = LoraConfig(r=rank, lora_alpha=alpha,
+                                target_modules=target_modules,
+                                init_lora_weights="loftq")
+
     peft_model = get_peft_model(base_model, lora_config)
+
+    print(peft_model)
 
     return peft_model
 
 class PhraseEncoder(nn.Module):
     def __init__(self, model_name:str, bos_token:torch.Tensor, score_level:int=5, pool_out:int=256, use_qlora:bool=True, 
-                 qlora_rank:int=1, qlora_alpha:int=1, freeze_emb:bool=False, use_mlp:bool=True, 
+                 qlora_rank:int=1, qlora_alpha:int=1, qlora_last:bool=True, freeze_emb:bool=False, use_mlp:bool=True, 
                  use_gru:bool=False, n_state:int=10):
         """_summary_
         Args:
@@ -40,6 +49,7 @@ class PhraseEncoder(nn.Module):
             use_qlora (bool, optional): use QLoRa. Defaults to True.
             qlora_rank (int, optional): rank of QLoRA. Defaults to 1.
             qlora_alpha (int, optional): gain of QLoRA. Defaults to 1.
+            qlora_last (bool, optional): apply QLoRA only to the last layer. Defaults to True.
             freeze_emb (int, optional): freeze embedding. Defaults to False
             use_mlp (bool, optional): use a MLP instead of a non-linear matrix projection. Defaults to True
             use_gru (bool, optional): use a GRU Decoder instead of a non-linear matrix projection. Defaults to False
@@ -59,8 +69,8 @@ class PhraseEncoder(nn.Module):
             raise ValueError(f'{model_name} is unvalid model name')
         if use_qlora:
             print(f'QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
-            self.emb1= qlora_mode(model_name,model.from_pretrained(model_name), qlora_rank, qlora_alpha)
-            self.emb2= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha)
+            self.emb1= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
+            self.emb2= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
 
         else:
             self.emb1= model.from_pretrained(model_name)

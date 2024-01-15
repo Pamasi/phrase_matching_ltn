@@ -61,8 +61,10 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
 
     train_loader, val_loader = create_loader(args)
     
-    model = PhraseEncoder(args.model_name, args.score_level, use_qlora=args.qlora, qlora_rank=args.qlora_rank, qlora_alpha=args.qlora_alpha, 
-                             freeze_emb=args.freeze_emb, use_mlp=args.use_mlp)
+    model = PhraseEncoder(args.model_name, args.score_level, 
+                          use_qlora=args.qlora, qlora_rank=args.qlora_rank, 
+                          qlora_alpha=args.qlora_alpha, qlora_last=args.qlora_last_layer,  
+                          freeze_emb=args.freeze_emb,  use_mlp=args.use_mlp)
     model.to(args.device)
 
     if args.use_sgd:
@@ -107,8 +109,16 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
         wandb_run_name = f'BCE_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
+        
         if args.qlora:
-            wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
+            if args.qlora_last_layer:
+                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}LAST' + '_' + wandb_run_name
+
+            else:
+                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
+
+        
+
         
 
                     
