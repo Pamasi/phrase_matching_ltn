@@ -90,7 +90,7 @@ def save_ckpt(
                     'model_state_dict': net.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'loss': loss,
-                    'lr': scheduler.state_dict(),
+                    'lr': scheduler.state_dict() if scheduler is not None else None,
                     'torch_state': torch_state
                     },
                get_ckpt_dir('best' if save_best else epoch, dir)
