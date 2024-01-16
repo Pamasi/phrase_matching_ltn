@@ -10,3 +10,5 @@ paper/*
 *.wandb
 *wandb*
 */ckpt_*
+*.xml
+*.gif

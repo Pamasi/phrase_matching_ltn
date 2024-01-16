@@ -108,7 +108,7 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'BCE_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+        wandb_run_name = f'TEXT_BCE_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
         
@@ -238,8 +238,8 @@ def create_loader(args):
     path_val =  os.path.join(os.getcwd(), args.path_val)
     
     torch.cuda.set_device(0)
-    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn)
-    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True)
+    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level)
+    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True, score_level=args.score_level)
 
     collate_fn = PatentCollator()
 

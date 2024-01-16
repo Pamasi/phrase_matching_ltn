@@ -19,7 +19,7 @@ def get_args_parser():
                         help="data path of val set")
     
     # network
-    parser.add_argument('--max_len', default=120, type=int, help='max length of the tokenizer')
+    parser.add_argument('--max_len', default=130, type=int, help='max length of the tokenizer')
     parser.add_argument('--qlora', action='store_true', help='use qlora')
     parser.add_argument('--qlora_last_layer', action='store_true', help='apply qlora only to the last layer instead of all')
     parser.add_argument('--qlora_rank', default=32, type=int, help='rank used in qlora')
@@ -41,8 +41,8 @@ def get_args_parser():
     parser.add_argument('--lr', default=2e-5, type=float)
     parser.add_argument('--no_scheduler', action='store_true', help='do not use the scheduler')
     parser.add_argument('--use_linear_scheduler', action='store_true', help='use a linear scheduler')
-    parser.add_argument('--c_lr_min', default=5e-6, type=float)
-    parser.add_argument('--c_lr_max', default=5e-5, type=float)
+    parser.add_argument('--c_lr_min', default=2e-5, type=float)
+    parser.add_argument('--c_lr_max', default=2e-3, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
     parser.add_argument("--cls_loss", default='BCE',type=str, choices=['BCE','L1'])
     parser.add_argument('--clip_norm', default=0.1, type=float, help="max possible norm before clipping procedure")

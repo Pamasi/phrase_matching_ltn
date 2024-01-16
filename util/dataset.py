@@ -19,7 +19,7 @@ class PatentDataset(Dataset):
     """
 
     def __init__(self, path:str, tokenizer:PreTrainedTokenizerFast, max_len:int, seed:int,is_val:bool=False,
-                 p_syn:float=0.5):
+                 p_syn:float=0.5, score_level:int=5):
         """ create a PatentDataset object
 
         Args:
@@ -29,17 +29,18 @@ class PatentDataset(Dataset):
             seed (int): seed of the random generator
             is_val (bool): is validation set. Defaults False
             p_syn (float): probability used of changing POS in a phrase. Defaults 0.5.
+            score_level(int): number of level. Defaults 5.
         """
         self.tokenizer = tokenizer
         self.max_len = max_len
 
-        self.level_score = 5
+        self.score_level = score_level
      
         # create the decoder that acts as prior knownledge
         # self.prior_tok   =   GPT2Tokenizer.from_pretrained(prior_decoder)
         # self.prior_model =   GPT2LMHeadModel.from_pretrained(prior_decoder)
         
-        raw_data = pd.read_csv(path, usecols=['anchor', 'target', 'context', 'score'])
+        raw_data = pd.read_csv(path, usecols=['anchor_context', 'target', 'score'])
         self._process(raw_data)
         
         random.seed(seed)
@@ -49,8 +50,8 @@ class PatentDataset(Dataset):
         nltk.download('punkt')
         nltk.download('averaged_perceptron_tagger')
 
-        self.is_val=is_val
-        self.p_syn=p_syn
+        self.is_val = is_val
+        self.p_syn = p_syn
     
 
     def _process(self, raw_data:pd.DataFrame):
@@ -61,7 +62,6 @@ class PatentDataset(Dataset):
         """
         
         # save only relevant data
-        raw_data['anchor_context'] = raw_data.apply(lambda row: row['anchor']+ ' [SEP] '+ row['context'], axis=1)
         self.data = raw_data[['anchor_context', 'target', 'score']]
         
         
@@ -79,7 +79,7 @@ class PatentDataset(Dataset):
             torch.Tensor: one-hot encoding vector
         """
         
-        cls = torch.zeros((self.level_score), )
+        cls = torch.zeros((self.score_level), )
         match score:
             case 0.0:
                 idx = 0
