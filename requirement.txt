@@ -16,3 +16,4 @@ nltk
 scipy
 optuna
 lightning-flash
+botorch

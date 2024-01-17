@@ -68,7 +68,8 @@ def get_args_parser():
     parser.add_argument('--sw_high_bound',  type=int, help='high bound for the score weight loss')
     parser.add_argument('--ew_low_bound',  type=int, help='low bound for the embedding weight loss')
     parser.add_argument('--ew_high_bound',  type=int, help='high bound for the embedding weight loss')
-
+    parser.add_argument('--optuna_job',  type=int, help='number of optuna jobs')
+    parser.add_argument("--optuna_sampler", default='bayesian',type=str, choices=['normal','bayesian'])
 
     return parser
 

@@ -10,10 +10,12 @@ import wandb
 import random
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
 from torchmetrics import Metric
-import optuna
+import optuna 
+from botorch.settings import validate_input_scaling
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
 from model.phrase_encoder import PhraseEncoder
+
 
 import matplotlib.pyplot as plt
 
@@ -485,14 +487,31 @@ if __name__ == '__main__':
         objective = Objective(score_weight_range= (args.sw_low_bound, args.sw_high_bound),emb_weight_range= (args.ew_low_bound, args.ew_high_bound), args=args)
         optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
         
+        validate_input_scaling(True)
+
+
+        match args.optuna_sampler:
+            case 'normal':
+                sampler = optuna.samplers.RandomSampler()
+
+            case 'bayesian':
+                sampler = optuna.integration.BoTorchSampler(
+                    n_startup_trials=10,
+                )
+
+            case _:
+                raise ValueError(f'{args.optuna_sampler} is an invalid sampler!')
+
         study = optuna.create_study(
             direction="maximize",
             study_name="Weights' losses",
-            sampler=optuna.samplers.RandomSampler(),
+            sampler=sampler,
             pruner=optuna.pruners.HyperbandPruner(),
         )
         
-        study.optimize(objective, n_trials=args.optuna_trial)
+
+        study.optimize(objective, n_trials=args.optuna_trial, n_jobs=args.optuna_job)
+        
 
     else:
         experiment(args)
