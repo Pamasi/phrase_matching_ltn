@@ -1,7 +1,7 @@
 import argparse, os, sys, logging
 import torch
 from torch.utils.data import DataLoader
-from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, L1Loss
+from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, CrossEntropyLoss, L1Loss, MSELoss
 from flash.core.optimizers import LAMB
 from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, AlbertTokenizerFast,get_linear_schedule_with_warmup
 from tqdm import trange
@@ -87,7 +87,22 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
                                                          epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
 
-    criterion = { 'ce': BCEWithLogitsLoss(), 
+    match args.cls_loss:
+        case 'CE':
+            cls_loss = CrossEntropyLoss()
+        case 'BCE':
+            cls_loss = BCEWithLogitsLoss()
+        
+        case 'L1':
+            cls_loss = L1Loss()
+        
+        case 'MSE':
+            cls_loss = MSELoss()
+        
+        case _:
+            raise ValueError(f'{args.cls_loss} is an invalid loss!')
+        
+    criterion = { 'ce': cls_loss, 
                  'sim': CosineEmbeddingLoss(), 
                  'emb_weight':args.emb_weight,
                  'score_weight':args.score_weight}
@@ -108,7 +123,7 @@ def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'TEXT_BCE_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+        wandb_run_name = f'TEXT_{args.cls_loss}_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
         

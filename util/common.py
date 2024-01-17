@@ -44,7 +44,7 @@ def get_args_parser():
     parser.add_argument('--c_lr_min', default=2e-5, type=float)
     parser.add_argument('--c_lr_max', default=2e-3, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
-    parser.add_argument("--cls_loss", default='BCE',type=str, choices=['BCE','L1'])
+    parser.add_argument("--cls_loss", default='BCE',type=str, choices=['CE','BCE','L1', 'MSE'])
     parser.add_argument('--clip_norm', default=0.1, type=float, help="max possible norm before clipping procedure")
     parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
@@ -53,7 +53,6 @@ def get_args_parser():
     parser.add_argument('--use_sgd', action='store_true', help='use SDG Optmizer')
     parser.add_argument('--use_lamb', action='store_true', help='use LAMB Optimizer')
 
-    
     # technicality 
     parser.add_argument('--seed', default=23, type=int, help='seed')
     parser.add_argument('--no_track', action='store_true', help='disable experiment tracking')
