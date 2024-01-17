@@ -63,7 +63,9 @@ def get_args_parser():
 
     # optuna
     parser.add_argument('--use_optuna', action='store_true', help='use optuna to select hyperparameters')
-    parser.add_argument('--optuna_trial', default=10, type=int, help='number of trial per study')
+    parser.add_argument('--use_ax', action='store_true', help='use optuna to select hyperparameters')
+    parser.add_argument('--ax_name', type=str, help='name of the experiment')
+    parser.add_argument('--n_trial', default=10, type=int, help='number of trial per study')
     parser.add_argument('--sw_low_bound',  type=int, help='low bound for the score weight loss')
     parser.add_argument('--sw_high_bound',  type=int, help='high bound for the score weight loss')
     parser.add_argument('--ew_low_bound',  type=int, help='low bound for the embedding weight loss')

@@ -10,8 +10,12 @@ import wandb
 import random
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
 from torchmetrics import Metric
-import optuna 
-from botorch.settings import validate_input_scaling
+
+
+from ax.service.ax_client import AxClient, ObjectiveProperties
+
+
+
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
 from model.phrase_encoder import PhraseEncoder
@@ -30,35 +34,8 @@ os.environ["WANDB_START_METHOD"] = "thread"
 
 
 
-class Objective:
-    """object function for hyperparameters search
-    """
-    def __init__(self, score_weight_range: Tuple[float],
-                    emb_weight_range: Tuple[float],
-                    args:argparse.ArgumentParser):
 
-
-        self.sw_r_min = score_weight_range[0]
-        self.sw_r_max = score_weight_range[1]
-
-        self.ew_r_min = emb_weight_range[0]
-        self.ew_r_max = emb_weight_range[1]
-
-        self.args = args
-
-    def __call__(self, trial):
-
-
-        self.args.emb_weight = trial.suggest_int("score_weight_loss", self.sw_r_min, self.sw_r_max)
-        self.args.score_weight = trial.suggest_int("emb_weight_loss", self.ew_r_min, self.ew_r_max)
-
-
-      
-        return experiment(args, trial=trial)
-
-
-
-def experiment(args, trial:Optional[optuna.Trial]=None)->torch.float:
+def experiment(args)->torch.float:
  
 
     train_loader, val_loader = create_loader(args)
@@ -476,42 +453,56 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         
     return  res_loss
 
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DistilledBERT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
 
-    if args.use_optuna:
+    if args.use_ax:
+        ax_client = AxClient()
+        ax_client.create_experiment(
+            name=args.ax_name,  # The name of the experiment.
+            parameters=[
 
-        objective = Objective(score_weight_range= (args.sw_low_bound, args.sw_high_bound),emb_weight_range= (args.ew_low_bound, args.ew_high_bound), args=args)
-        optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-        
-        validate_input_scaling(True)
-
-
-        match args.optuna_sampler:
-            case 'normal':
-                sampler = optuna.samplers.RandomSampler()
-
-            case 'bayesian':
-                sampler = optuna.integration.BoTorchSampler(
-                    n_startup_trials=10,
-                )
-
-            case _:
-                raise ValueError(f'{args.optuna_sampler} is an invalid sampler!')
-
-        study = optuna.create_study(
-            direction="maximize",
-            study_name="Weights' losses",
-            sampler=sampler,
-            pruner=optuna.pruners.HyperbandPruner(),
+                {
+                    "name": "score_weight",
+                    "type": "range",
+                    "bounds": [args.sw_low_bound, args.sw_high_bound], 
+                    "value_type": "int"
+                },
+                {
+                    "name": "emb_weight",
+                    "type": "range",
+                    "bounds": [args.ew_low_bound, args.ew_high_bound], 
+                    "value_type": "int"
+                }
+            ],
+            objectives={"acc": ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
+            # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
+            # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
-        
 
-        study.optimize(objective, n_trials=args.optuna_trial, n_jobs=args.optuna_job)
-        
+
+
+
+        for _ in range(args.n_trial):
+            ax_client.get_max_parallelism()
+
+            parameters, trial_index = ax_client.get_next_trial()
+
+            # TODO: refactor to be nicer
+            args.score_weight = parameters['score_weight']
+            args.emb_weight = parameters['emb_weight']
+
+            ax_client.complete_trial(trial_index=trial_index, raw_data=experiment(args))
+
+
+        best_parameters, values = ax_client.get_best_parameters()
+        print(f'best parameters:{best_parameters}')
+        ax_client.get_contour_plot(param_x="score_weight", param_y="emb_weight", metric_name="acc")
+        ax_client.get_optimization_trace()
+
+        # save data
+        ax_client.save_to_json_file()
 
     else:
         experiment(args)
