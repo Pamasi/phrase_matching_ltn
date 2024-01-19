@@ -17,3 +17,4 @@ scipy
 optuna
 lightning-flash
 botorch
+ax-platform[mysql]
