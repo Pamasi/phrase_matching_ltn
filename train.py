@@ -327,7 +327,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         train_loss_tot = train_loss_score*criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
         
         if use_ltn:
-            loss += criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
+            train_loss_tot += criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
 
         batch_loss += train_loss_tot
         train_loss_tot.backward()
