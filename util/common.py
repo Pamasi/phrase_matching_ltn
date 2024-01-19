@@ -26,6 +26,8 @@ def get_args_parser():
     parser.add_argument('--qlora_alpha', default=32, type=int, help='gain used in qlora')
     parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
+    parser.add_argument('--use_ltn', action='store_true', help='use constrainted loss during training')
+    parser.add_argument('--aggr_p', default=2, type=int, help='aggregator norm used during satisfiability computation')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
 
 
@@ -49,6 +51,7 @@ def get_args_parser():
     parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
     parser.add_argument('--score_weight', default=10, type=float, help='score loss weight')
+    parser.add_argument('--nesy_weight', default=1, type=float, help='score loss weight')
     parser.add_argument('--p_syn', default=0.1, type=float, help='probability of changing POS in a phrase')
     parser.add_argument('--use_sgd', action='store_true', help='use SDG Optmizer')
     parser.add_argument('--use_lamb', action='store_true', help='use LAMB Optimizer')
@@ -70,6 +73,8 @@ def get_args_parser():
     parser.add_argument('--sw_high_bound',  type=int, help='high bound for the score weight loss')
     parser.add_argument('--ew_low_bound',  type=int, help='low bound for the embedding weight loss')
     parser.add_argument('--ew_high_bound',  type=int, help='high bound for the embedding weight loss')
+    parser.add_argument('--nw_low_bound',  type=float, help='low bound for the nesy weight loss')
+    parser.add_argument('--nw_high_bound',  type=float, help='high bound for the nesy weight loss')
     parser.add_argument('--optuna_job',  type=int, help='number of optuna jobs')
     parser.add_argument("--optuna_sampler", default='bayesian',type=str, choices=['normal','bayesian'])
 
