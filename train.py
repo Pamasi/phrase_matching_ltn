@@ -118,6 +118,7 @@ def experiment(args)->torch.float:
         wandb_run_name = f'TEXT_{args.cls_loss}_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
 
 
+
         
         if args.qlora:
             if args.qlora_last_layer:
@@ -126,9 +127,8 @@ def experiment(args)->torch.float:
             else:
                 wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
 
-        
-
-        
+        if args.use_ltn:
+            wandb_run_name = wandb_run_name + f'NESY{round(args.nesy_weight,4)}' 
 
                     
         if args.model_name.find('distilbert')>=0:
@@ -412,8 +412,9 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
             loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
 
             if use_ltn:
-                batch_loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
-                loss += batch_loss_nesy
+                loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+                batch_loss_nesy += loss_nesy
+                loss += loss_nesy*criterion['nesy_weight']
 
             batch_loss_tot += loss
                 
@@ -511,8 +512,9 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
 
 
         if use_ltn:
-            batch_loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
-            loss += batch_loss_nesy
+            loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+            batch_loss_nesy += loss_nesy
+            loss += loss_nesy*criterion['nesy_weight']
 
 
         batch_loss_tot += loss
