@@ -579,6 +579,8 @@ if __name__ == '__main__':
 
             objectives={'accuracy': ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
             parameter_constraints=['score_weight >= emb_weight'],
+            parameter_constraints=['emb_weight >= nesy_weight'],
+            parameter_constraints=['score_weight >= nesy_weight'],
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
