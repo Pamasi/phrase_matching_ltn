@@ -86,7 +86,7 @@ def experiment(args)->torch.float:
     if args.use_ltn:
         criterion = { 'ce': cls_loss, 
             'sim': CosineEmbeddingLoss(), 
-            'nesy': NeSyLoss(aggr_p=args.aggr_p),
+            'nesy': NeSyLoss(aggr_p=args.aggr_p, strategy=args.nesy_constr),
             'emb_weight':args.emb_weight,
             'score_weight':args.score_weight,
             'nesy_weight':args.nesy_weight}        
@@ -578,9 +578,7 @@ if __name__ == '__main__':
             ],
 
             objectives={'accuracy': ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
-            parameter_constraints=['score_weight >= emb_weight'],
-            parameter_constraints=['emb_weight >= nesy_weight'],
-            parameter_constraints=['score_weight >= nesy_weight'],
+            parameter_constraints=['score_weight >= emb_weight']
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )

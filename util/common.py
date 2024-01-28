@@ -27,6 +27,7 @@ def get_args_parser():
     parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
     parser.add_argument('--use_ltn', action='store_true', help='use constrainted loss during training')
+    parser.add_argument('--nesy_constr', type=int, default=1, choices=[0,1,2], help='constraints version to be employed')
     parser.add_argument('--aggr_p', default=2, type=int, help='aggregator norm used during satisfiability computation')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
 
