@@ -102,8 +102,6 @@ class NeSyLoss():
                 has_neg = False
 
             if self.strategy == 1:
-                has_neg = True
-
                 if has_pos:
                     out_pos  = self.forall( ltn.diag(anchor_emb_var_p, cand_emb_var_p, pred_scores_var_p, tgt_scores_var_p),
                                             self.implies(self.p_is_similar(anchor_emb_var_p, cand_emb_var_p), 
