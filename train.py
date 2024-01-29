@@ -14,8 +14,8 @@ from torchmetrics import Metric
 
 
 from ax.service.ax_client import AxClient, ObjectiveProperties
-
-
+from ax.modelbridge.generation_strategy import GenerationStep, GenerationStrategy
+from ax.modelbridge.registry import ModelRegistryBase, Models
 
 from util.dataset import PatentDataset, PatentCollator
 from util.common import get_args_parser, save_ckpt
@@ -550,7 +550,18 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.use_ax:
-        ax_client = AxClient()
+        gen_strat = GenerationStrategy(
+            steps=[
+                # 1. Initialization step (does not require pre-existing data and is well-suited for
+                # initial sampling of the search space)
+                GenerationStep(
+                    model=Models.SOBOL,
+                    num_trials=-1,  # How many trials should be produced from this generation step
+                    max_parallelism=5,  # Max parallelism for this step
+                )
+            ]
+        )
+        ax_client = AxClient(generation_strategy=gen_strat)
         ax_client.create_experiment(
             name=args.ax_name,  # The name of the experiment.
             parameters=[
@@ -578,7 +589,7 @@ if __name__ == '__main__':
             ],
 
             objectives={'accuracy': ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
-            parameter_constraints=['score_weight >= emb_weight']
+            parameter_constraints=['score_weight >= emb_weight', "nesy_weight <= 3"]
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
