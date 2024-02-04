@@ -116,8 +116,7 @@ def experiment(args)->torch.float:
         wandb.login()
 
         wandb_run_name = f'TEXT_{args.cls_loss}_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
-
-
+        wandb_tag = []
 
         
         if args.qlora:
@@ -129,6 +128,9 @@ def experiment(args)->torch.float:
 
         if args.use_ltn:
             wandb_run_name = wandb_run_name + f'NESY{round(args.nesy_weight,4)}' 
+
+
+            wandb_tag.extend(['ltn, 'f'nesy_v{args.nesy_constr}'])
 
                     
         if args.model_name.find('distilbert')>=0:
@@ -158,7 +160,7 @@ def experiment(args)->torch.float:
         if args.lr_range_test:
             wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
         
-        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True)  
+        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True, tags=wandb_tag)  
 
         # automate the name folder
         args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
