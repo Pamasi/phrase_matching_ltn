@@ -18,7 +18,7 @@ from ax.modelbridge.generation_strategy import GenerationStep, GenerationStrateg
 from ax.modelbridge.registry import ModelRegistryBase, Models
 
 from util.dataset import PatentDataset, PatentCollator
-from util.common import get_args_parser, save_ckpt
+from util.common import get_args_parser, save_ckpt, load_ckpt
 from model.phrase_encoder import PhraseEncoder
 from model.nesy import NeSyLoss
 
@@ -115,7 +115,7 @@ def experiment(args)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'TEXT_{args.cls_loss}_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
+        wandb_run_name = f'TEXT_{args.cls_loss}_SW{int(args.score_weight)}_EW{int(args.emb_weight)}_B{args.batch}_LR{args.lr}'
         wandb_tag = []
 
         
@@ -187,7 +187,14 @@ def experiment(args)->torch.float:
         # plt.savefig(f'{args.dir}/lr_range_test.jpg')
   
     else:
-        for epoch in trange(args.n_epoch):
+        #
+        if args.load_ckpt:
+            offset_epoch = load_ckpt(f'{args.dir}/ckpt_best', model, optimizer, lr_scheduler)
+
+        else:
+            offset_epoch = 0
+
+        for epoch in trange(offset_epoch, args.n_epoch):
             # step
             train_loss= train_step(train_loader, args.device, model, optimizer, 
                                 criterion, lr_scheduler=lr_scheduler, 

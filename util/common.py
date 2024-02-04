@@ -30,7 +30,8 @@ def get_args_parser():
     parser.add_argument('--nesy_constr', type=int, default=1, choices=[0,1,2], help='constraints version to be employed')
     parser.add_argument('--aggr_p', default=2, type=int, help='aggregator norm used during satisfiability computation')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
-
+    parser.add_argument('--load_ckpt', action='store_true', help='load checkpoint from \
+                        the directory previously created for the current configuration')
 
     # config
     parser.add_argument('--batch', default=32, type=int, help='batch size')
@@ -103,6 +104,35 @@ def save_ckpt(
                     },
                get_ckpt_dir('best' if save_best else epoch, dir)
     )    
+
+
+def load_ckpt(
+    ckpt_dir:str,
+    net: torch.nn.Module,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler.CyclicLR] = None
+    ) -> int:
+
+    ckpt = torch.load(ckpt_dir)
+
+    net.load_state_dict(ckpt['model_state_dict'])
+
+    optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+    scheduler.load_state_dict(['lr'])
+
+    torch.set_rng_state(ckpt['torch_state'])
+
+    epoch = ckpt['epoch']
+
+
+    return epoch
+
+
+
+
+
+
+
 
 def get_ckpt_dir(epoch:int, dir:str='' ) -> str:
     if  osp.exists(dir)==False:
