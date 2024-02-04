@@ -129,6 +129,10 @@ def experiment(args)->torch.float:
         if args.use_ltn:
             wandb_run_name = wandb_run_name + f'NESY{round(args.nesy_weight,4)}' 
 
+            if args.step_p>0:
+                wandb_tag.append(f'linear_p@{args.step_p}')
+
+                wandb_run_name = wandb_run_name + f'LINEAR_P' 
 
             wandb_tag.extend(['ltn, 'f'nesy_v{args.nesy_constr}'])
 
@@ -207,6 +211,11 @@ def experiment(args)->torch.float:
             
 
             if args.use_ltn:
+
+                if epoch > 0 and args.step_p % epoch ==0:
+                    p_mean = criterion['nesy'].increase_p()
+                else:
+                    p_mean =criterion['nesy'].aggr_p
                 dict_log =  {
                             "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
                             "train/loss": train_loss['tot'],
@@ -219,8 +228,10 @@ def experiment(args)->torch.float:
                             "val/loss": val_loss['tot'],
                             "val/loss_score": val_loss['score'],
                             "val/loss_emb":   val_loss['emb'],
-                            "val/loss_nesy":   val_loss['nesy']
+                            "val/loss_nesy":   val_loss['nesy'],
+                            "val/p_mean/ForAll": p_mean
                         }
+                
                 
             else:
                 dict_log =  {
@@ -424,6 +435,7 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
                 loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
                 batch_loss_nesy += loss_nesy
                 loss += loss_nesy*criterion['nesy_weight']
+
 
             batch_loss_tot += loss
                 

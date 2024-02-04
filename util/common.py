@@ -28,7 +28,8 @@ def get_args_parser():
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
     parser.add_argument('--use_ltn', action='store_true', help='use constrainted loss during training')
     parser.add_argument('--nesy_constr', type=int, default=1, choices=[0,1,2], help='constraints version to be employed')
-    parser.add_argument('--aggr_p', default=2, type=int, help='aggregator norm used during satisfiability computation')
+    parser.add_argument('--aggr_p', default=2, type=int, help='aggregator p-mean norm  value used during universal quantification')
+    parser.add_argument('--step_p', default=0, type=int, help='aggregator p-mean step increase time used during universal quantification')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
     parser.add_argument('--load_ckpt', action='store_true', help='load checkpoint from \
                         the directory previously created for the current configuration')

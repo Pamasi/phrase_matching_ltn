@@ -10,7 +10,7 @@ class NeSyLoss():
         """create the neuro-symbolic loss
 
         Args:
-            aggr_p (int, optional): aggregator norm value. Defaults to 2.
+            aggr_p (int, optional): aggregator p-mean norm value. Defaults to 2.
             pos_idx (int, optional): index value of positive score. Defaults to 2.
             strategy (int, optional): strategy to be use for computing the nesy loss. Defaults to 0.
 
@@ -20,10 +20,10 @@ class NeSyLoss():
         self.p_is_similar = ltn.Predicate(func=lambda anchor, candidate : 0.5 + F.cosine_similarity(anchor, candidate, dim = -1 )*0.5 )
         self.p_is_score = ltn.Predicate(func=lambda pred, tgt : torch.sum( pred * tgt , dim = -1 ))
 
-
-        self.forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(), quantifier='f')
+        self.aggr_p = aggr_p
+        self.forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(p=aggr_p), quantifier='f')
         self.implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
-        self.sat_axiom = ltn.fuzzy_ops.SatAgg(ltn.fuzzy_ops.AggregPMeanError(p=aggr_p))
+        self.sat_axiom = ltn.fuzzy_ops.SatAgg(ltn.fuzzy_ops.AggregPMeanError())
 
         self.pos_idx = pos_idx
 
@@ -36,7 +36,21 @@ class NeSyLoss():
         self.strategy = strategy
 
 
-           
+    def increase_pmean(self, factor:int=2) -> int:
+        """increase the p-mean of the ForAll aggregator by a factor 
+
+        Args:
+            factor (int, optional): multiplicative factor . Defaults to 2.
+
+        Returns:
+            int: current p-mean value of the aggregator norm
+        """
+
+        self.aggr_p*=factor
+
+        self.forall =  ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(self.aggr_p), quantifier='f')
+
+        return self.aggr_p
 
     def __call__(self, anchor_emb:torch.Tensor, cand_emb:torch.Tensor,
                         pred_scores:torch.Tensor, tgt_scores:torch.Tensor) ->torch.Tensor:
