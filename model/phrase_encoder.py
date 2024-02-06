@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import DistilBertModel, ElectraModel, AlbertModel
+from transformers import DistilBertModel, ElectraModel, AlbertModel, AutoModelForMaskedLM
 from peft import LoraConfig, get_peft_model, PeftModel
 
 
@@ -12,7 +12,7 @@ from typing import Dict, Tuple
 def qlora_mode(model_name:str, base_model:nn.Module, rank:int, alpha:int, only_last:bool) -> PeftModel:
     if model_name.find('distilbert')>=0:
         target_modules=['q_lin', 'k_lin', 'v_lin']
-    elif model_name.find('electra')>=0 or model_name.find('albert')>=0:
+    elif model_name.find('electra')>=0 or model_name.find('albert')>=0 or model_name.find('distilroberta')>=0:
         target_modules=['query', 'key', 'value']
     else:
         raise ValueError(f'{model_name} is an invalid name')
@@ -59,18 +59,44 @@ class PhraseEncoder(nn.Module):
 
         super(PhraseEncoder, self).__init__()
 
+
+
+        self.use_roberta = False
+
         if model_name.find('distilbert')>=0:
             model = DistilBertModel
         elif model_name.find('electra')>=0:
             model = ElectraModel
         elif model_name.find('albert')>=0:
             model = AlbertModel
+
+        elif model_name.find('distilroberta')>=0:
+            model = AutoModelForMaskedLM.from_pretrained('hupd/hupd-distilroberta-base')
+
+
+            self.use_roberta = True
+
+
+            
+
         else:
             raise ValueError(f'{model_name} is unvalid model name')
         if use_qlora:
             print(f'QLORA enabled:\trank={qlora_rank}\talpha={qlora_alpha}')
-            self.emb1= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
-            self.emb2= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
+
+
+            emb1= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
+            emb2= qlora_mode(model_name, model.from_pretrained(model_name), qlora_rank, qlora_alpha, qlora_last )
+
+            # remove decoder
+            if self.use_roberta:
+                emb1.lm_head = nn.Identity(768) #nn.Sequential(*list(emb1.lm_head.children())[:-1])
+                emb2.lm_head = nn.Identity(768) #nn.Sequential(*list(emb2.lm_head.children())[:-1])
+              
+          
+            self.emb1 = emb1
+            self.emb2 = emb2
+
 
         else:
             self.emb1= model.from_pretrained(model_name)
@@ -83,8 +109,6 @@ class PhraseEncoder(nn.Module):
 
             for param in self.emb2.embeddings.parameters():
                 param.requires_grad = False
-
-
 
         self.pool =nn.AdaptiveAvgPool2d((1, pool_out))
         
@@ -133,8 +157,13 @@ class PhraseEncoder(nn.Module):
                                   latent embedding of the target,
                                   score logits)
         """
-        hidden1 = self.emb1(input_ids=anchor['ids'], attention_mask=anchor['mask']).last_hidden_state
-        hidden2 = self.emb2(input_ids=target['ids'], attention_mask=target['mask']).last_hidden_state
+        if self.use_roberta:
+            hidden1 = self.emb1(input_ids=anchor['ids'], attention_mask=anchor['mask'])
+            hidden2 = self.emb2(input_ids=target['ids'], attention_mask=target['mask'])
+        
+        else:
+            hidden1 = self.emb1(input_ids=anchor['ids'], attention_mask=anchor['mask']).last_hidden_state
+            hidden2 = self.emb2(input_ids=target['ids'], attention_mask=target['mask']).last_hidden_state
   
        
         pool1 = self.pool(hidden1).squeeze(dim=1)

@@ -1,9 +1,10 @@
 import argparse, os, sys, logging
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, CrossEntropyLoss, L1Loss, MSELoss
 from flash.core.optimizers import LAMB
-from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, AlbertTokenizerFast,get_linear_schedule_with_warmup
+from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, AlbertTokenizerFast, get_linear_schedule_with_warmup, AutoTokenizer
 from tqdm import trange
 from typing import Dict, Optional, Tuple, Callable
 import wandb
@@ -13,13 +14,13 @@ from torchmetrics import Metric
 
 
 from ax.service.ax_client import AxClient, ObjectiveProperties
-
-
+from ax.modelbridge.generation_strategy import GenerationStep, GenerationStrategy
+from ax.modelbridge.registry import ModelRegistryBase, Models
 
 from util.dataset import PatentDataset, PatentCollator
-from util.common import get_args_parser, save_ckpt
+from util.common import get_args_parser, save_ckpt, load_ckpt
 from model.phrase_encoder import PhraseEncoder
-
+from model.nesy import NeSyLoss
 
 import matplotlib.pyplot as plt
 
@@ -81,10 +82,22 @@ def experiment(args)->torch.float:
         case _:
             raise ValueError(f'{args.cls_loss} is an invalid loss!')
         
-    criterion = { 'ce': cls_loss, 
-                 'sim': CosineEmbeddingLoss(), 
-                 'emb_weight':args.emb_weight,
-                 'score_weight':args.score_weight}
+
+    if args.use_ltn:
+        criterion = { 'ce': cls_loss, 
+            'sim': CosineEmbeddingLoss(), 
+            'nesy': NeSyLoss(aggr_p=args.aggr_p, strategy=args.nesy_constr),
+            'emb_weight':args.emb_weight,
+            'score_weight':args.score_weight,
+            'nesy_weight':args.nesy_weight}        
+
+
+    else:
+        criterion = { 'ce': cls_loss, 
+                    'sim': CosineEmbeddingLoss(), 
+                    'emb_weight':args.emb_weight,
+                    'score_weight':args.score_weight}
+    
 
 
     # reproducibility
@@ -102,8 +115,8 @@ def experiment(args)->torch.float:
     if args.no_track==False:
         wandb.login()
 
-        wandb_run_name = f'TEXT_{args.cls_loss}_SW{args.score_weight}_EW{args.emb_weight}_B{args.batch}_LR{args.lr}'
-
+        wandb_run_name = f'TEXT_{args.cls_loss}_SW{int(args.score_weight)}_EW{int(args.emb_weight)}_B{args.batch}_LR{args.lr}'
+        wandb_tag = []
 
         
         if args.qlora:
@@ -113,9 +126,15 @@ def experiment(args)->torch.float:
             else:
                 wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
 
-        
+        if args.use_ltn:
+            wandb_run_name = wandb_run_name + f'NESY{round(args.nesy_weight,4)}' 
 
-        
+            if args.step_p>0:
+                wandb_tag.append(f'linear_p@{args.step_p}')
+
+                wandb_run_name = wandb_run_name + f'LINEAR_P' 
+
+            wandb_tag.extend(['ltn, 'f'nesy_v{args.nesy_constr}'])
 
                     
         if args.model_name.find('distilbert')>=0:
@@ -124,6 +143,9 @@ def experiment(args)->torch.float:
             wandb_run_name = wandb_run_name   + '_ELECTRA'
         elif args.model_name.find('albert')>=0:
             wandb_run_name = wandb_run_name   + '_ALBERT'
+        elif args.model_name.find('distilroberta-base')>=0:
+            wandb_run_name = wandb_run_name   + '_HUPD_DISTILROBERTA'
+
         if args.use_mlp:
             wandb_run_name = wandb_run_name   + '_MLP'
         elif args.use_gru:
@@ -142,7 +164,7 @@ def experiment(args)->torch.float:
         if args.lr_range_test:
             wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
         
-        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True)  
+        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True, tags=wandb_tag)  
 
         # automate the name folder
         args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
@@ -169,26 +191,62 @@ def experiment(args)->torch.float:
         # plt.savefig(f'{args.dir}/lr_range_test.jpg')
   
     else:
-        for epoch in trange(args.n_epoch):
+        #
+        if args.load_ckpt:
+            offset_epoch = load_ckpt(f'{args.dir}/ckpt_best', model, optimizer, lr_scheduler)
+
+        else:
+            offset_epoch = 0
+
+        for epoch in trange(offset_epoch, args.n_epoch):
             # step
             train_loss= train_step(train_loader, args.device, model, optimizer, 
-                                criterion, lr_scheduler=lr_scheduler, move_to_gpu=PatentCollator.move_to_gpu, max_norm=args.clip_norm)
+                                criterion, lr_scheduler=lr_scheduler, 
+                                move_to_gpu=PatentCollator.move_to_gpu,
+                                  max_norm=args.clip_norm, use_ltn=args.use_ltn)
                                                                                             
             val_loss, val_metric   = val_step(val_loader, args.device, model, 
-                                        criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
-            dict_log =  {
-                        "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
-                        "train/loss": train_loss['tot'],
-                        "train/loss_score": train_loss['score'],
-                        "train/loss_emb": train_loss['emb'],
-                        "val/acc": val_metric['acc'],
-                        "val/ap":  val_metric['ap'],
-                        "val/ar":  val_metric['ar'],
-                        "val/loss": val_loss['tot'],
-                        "val/loss_score": val_loss['score'],
-                        "val/loss_emb":   val_loss['emb']
-                    }
+                                        criterion, move_to_gpu=PatentCollator.move_to_gpu, 
+                                        metric=metric, use_ltn=args.use_ltn)
             
+
+            if args.use_ltn:
+                # increment p-mean value of aggregator norm
+                if epoch > 1 and args.use_step and args.step_p % (epoch-1) == 0:
+                    criterion['nesy'].increase_pmean()
+             
+                dict_log =  {
+                            "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
+                            "train/loss": train_loss['tot'],
+                            "train/loss_score": train_loss['score'],
+                            "train/loss_emb": train_loss['emb'],
+                            "train/loss_nesy": train_loss['nesy'],
+                            "val/acc": val_metric['acc'],
+                            "val/ap":  val_metric['ap'],
+                            "val/ar":  val_metric['ar'],
+                            "val/loss": val_loss['tot'],
+                            "val/loss_score": val_loss['score'],
+                            "val/loss_emb":   val_loss['emb'],
+                            "val/loss_nesy":   val_loss['nesy'],
+                            "val/p_mean/ForAll": criterion['nesy'].aggr_p
+                        }
+                
+                
+            else:
+                dict_log =  {
+                    "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
+                    "train/loss": train_loss['tot'],
+                    "train/loss_score": train_loss['score'],
+                    "train/loss_emb": train_loss['emb'],
+                    "val/acc": val_metric['acc'],
+                    "val/ap":  val_metric['ap'],
+                    "val/ar":  val_metric['ar'],
+                    "val/loss": val_loss['tot'],
+                    "val/loss_score": val_loss['score'],
+                    "val/loss_emb":   val_loss['emb']
+                }
+            
+                
             if args.no_track==False:
                 wandb.log(dict_log )
 
@@ -209,14 +267,8 @@ def experiment(args)->torch.float:
                             optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
                 
 
-            if args.use_optuna:
-                trial.report(val_metric['acc'], epoch)
 
-                # Handle pruning based on the intermediate value.
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-
-    return val_metric['acc']
+    return {'accuracy': val_metric['acc'].item()}
 
 def create_loader(args):
     print(f'model name ={args.model_name}')
@@ -227,6 +279,8 @@ def create_loader(args):
         tokenizer =  ElectraTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
     elif args.model_name.find('albert')>=0:
         tokenizer =  AlbertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('distilroberta-base')>=0:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
 
     path_train =  os.path.join(os.getcwd(), args.path_train)
     path_val =  os.path.join(os.getcwd(), args.path_val)
@@ -248,7 +302,9 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
          optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
          criterion: Dict[str, torch.nn.Module], 
          move_to_gpu: Callable, metric: Optional[Dict[str, Metric]]=None,
-         run:Optional[wandb.run]=None) -> int:
+         run:Optional[wandb.run]=None,
+         use_ltn:bool=False
+         ) -> int:
     """ execute a step of one epoch
 
     Args:
@@ -263,6 +319,7 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         move_to_gpu (Callable): function used to move data from cpu to gpu
         metric (Optional[Dict[str, Metric]): dict of all metrics to be computed (only for validation set). Default None
         wandb_run(Optional[wandb.run]): wandb_run. Default None
+        use_ltn(bool): use neuro-symbolic loss. Default False
 
     Returns:
         int: last iteration
@@ -284,7 +341,12 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
         train_loss_emb = criterion['sim'](latent1, latent2, label_type)
 
 
+        
+        
         train_loss_tot = train_loss_score*criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
+        
+        if use_ltn:
+            train_loss_tot += criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
 
         batch_loss += train_loss_tot
         train_loss_tot.backward()
@@ -293,6 +355,8 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
        
         
         val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
+        
+
         
         dict_log =  {
                     "lr": lr_scheduler.get_last_lr()[0],
@@ -322,7 +386,8 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
 
 def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
          criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable, metric: Dict[str, Metric]=None) -> Tuple[Dict[str,torch.Tensor]]:
+         move_to_gpu: Callable, metric: Dict[str, Metric]=None,
+         use_ltn:bool=False) -> Tuple[Dict[str,torch.Tensor]]:
     """ execute a step of one epoch
 
     Args:
@@ -332,7 +397,8 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
         optimizer (torch.optim): optimizer to be used in training
         criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
         move_to_gpu (Callable): function used to move data from cpu to gpu
-        metric ([Dict[str, Metric]): dict of all metrics to be computed.
+        metric ([Dict[str, Metric]): dict of all metrics to be computed
+        use_ltn(bool): use neuro-symbolic loss. Default False
 
     Returns:
         Tuple[Dict[str,torch.Tensor]]: metrics and loss results
@@ -342,6 +408,7 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
     batch_loss_tot = 0.0
     batch_loss_score = 0.0
     batch_loss_emb = 0.0
+    batch_loss_nesy = 0.0
     n_batch = len(data_loader)
 
     model.eval() 
@@ -362,6 +429,13 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
 
 
             loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
+
+            if use_ltn:
+                loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+                batch_loss_nesy += loss_nesy
+                loss += loss_nesy*criterion['nesy_weight']
+
+
             batch_loss_tot += loss
                 
 
@@ -380,19 +454,37 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
                     'acc': metric['acc'](preds, tgts)
     }
 
-    res_loss = {'tot': batch_loss_tot/n_batch,
-                'score':batch_loss_score/n_batch,
-                'emb': batch_loss_emb/n_batch
-            }
+    if use_ltn:
+        res_loss = {'tot': batch_loss_tot/n_batch,
+                    'score':batch_loss_score/n_batch,
+                    'emb': batch_loss_emb/n_batch,
+                    'nesy': batch_loss_nesy/n_batch
+                }
+        
+    else:
+        res_loss = {'tot': batch_loss_tot/n_batch,
+            'score':batch_loss_score/n_batch,
+            'emb': batch_loss_emb/n_batch
+        }
+        
         
     return  res_loss, res_metric
+
+
+
+           
+
+                   
+
+
 
 
 def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
          optimizer:torch.optim, criterion: Dict[str, torch.nn.Module], 
          move_to_gpu: Callable,
          lr_scheduler:Optional[torch.optim.lr_scheduler.LRScheduler]=None,
-          max_norm:float=0.1) -> Dict[str,torch.Tensor]:
+         max_norm:float=0.1,
+         use_ltn:bool=False) -> Dict[str,torch.Tensor]:
     """ execute a step of one epoch
 
     Args:
@@ -404,6 +496,7 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         criterion (Dict[str, torch.nn.Module]): dict of the different loss to be computed
         lr_scheduler (Optional[torch.optim.lr_scheduler.LRScheduler]): scheduler of the learning rate. Default to None
         max_norm (float): gradient clipping norm. Default to 0.1
+        use_ltn(bool): use neuro-symbolic loss. Default False
 
     Returns:
         Dict[str,torch.Tensor]:  loss results
@@ -412,6 +505,7 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
     batch_loss_tot = 0.0
     batch_loss_score = 0.0
     batch_loss_emb = 0.0
+    batch_loss_nesy = 0.0
     n_batch = len(data_loader)
 
     model.train()
@@ -435,6 +529,14 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         batch_loss_emb += loss_emb
 
         loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
+
+
+        if use_ltn:
+            loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+            batch_loss_nesy += loss_nesy
+            loss += loss_nesy*criterion['nesy_weight']
+
+
         batch_loss_tot += loss
 
         loss.backward()
@@ -446,10 +548,20 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
             lr_scheduler.step()
 
 
-    res_loss = {'tot': batch_loss_tot/n_batch,
-                'score':batch_loss_score/n_batch,
-                'emb': batch_loss_emb/n_batch
-            }
+
+    if use_ltn:
+        res_loss = {'tot': batch_loss_tot/n_batch,
+                    'score':batch_loss_score/n_batch,
+                    'emb': batch_loss_emb/n_batch,
+                    'nesy': batch_loss_nesy/n_batch
+                }
+        
+    else:
+        res_loss = {'tot': batch_loss_tot/n_batch,
+                    'score':batch_loss_score/n_batch,
+                    'emb': batch_loss_emb/n_batch
+                }
+        
         
     return  res_loss
 
@@ -458,25 +570,46 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.use_ax:
-        ax_client = AxClient()
+        gen_strat = GenerationStrategy(
+            steps=[
+                # 1. Initialization step (does not require pre-existing data and is well-suited for
+                # initial sampling of the search space)
+                GenerationStep(
+                    model=Models.SOBOL,
+                    num_trials=-1,  # How many trials should be produced from this generation step
+                    max_parallelism=5,  # Max parallelism for this step
+                )
+            ]
+        )
+        ax_client = AxClient(generation_strategy=gen_strat)
         ax_client.create_experiment(
             name=args.ax_name,  # The name of the experiment.
             parameters=[
 
                 {
-                    "name": "score_weight",
-                    "type": "range",
-                    "bounds": [args.sw_low_bound, args.sw_high_bound], 
-                    "value_type": "int"
+                    'name': 'score_weight',
+                    'type': 'range',
+                    'bounds': [args.sw_low_bound, args.sw_high_bound], 
+                    'value_type': 'int'
                 },
                 {
-                    "name": "emb_weight",
-                    "type": "range",
-                    "bounds": [args.ew_low_bound, args.ew_high_bound], 
-                    "value_type": "int"
+                    'name': 'emb_weight',
+                    'type': 'range',
+                    'bounds': [args.ew_low_bound, args.ew_high_bound], 
+                    'value_type': 'int'
+                },
+                {
+                    'name': 'nesy_weight',
+                    'type': 'range',
+                    'bounds': [args.nw_low_bound, args.nw_high_bound], 
+                    'value_type': 'float',
+                    'log_scale': True,
+                    
                 }
             ],
-            objectives={"acc": ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
+
+            objectives={'accuracy': ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
+            parameter_constraints=['score_weight >= emb_weight', "nesy_weight <= 3"]
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
@@ -492,13 +625,14 @@ if __name__ == '__main__':
             # TODO: refactor to be nicer
             args.score_weight = parameters['score_weight']
             args.emb_weight = parameters['emb_weight']
+            args.nesy_weight = parameters['nesy_weight']
 
             ax_client.complete_trial(trial_index=trial_index, raw_data=experiment(args))
 
 
         best_parameters, values = ax_client.get_best_parameters()
         print(f'best parameters:{best_parameters}')
-        ax_client.get_contour_plot(param_x="score_weight", param_y="emb_weight", metric_name="acc")
+        ax_client.get_contour_plot(param_x='score_weight', param_y='emb_weight', param_z='nesy_weight', metric_name="accuracy")
         ax_client.get_optimization_trace()
 
         # save data

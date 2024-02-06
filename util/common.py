@@ -26,8 +26,13 @@ def get_args_parser():
     parser.add_argument('--qlora_alpha', default=32, type=int, help='gain used in qlora')
     parser.add_argument('--use_gru', action='store_true', help='use a GRU Decoder')
     parser.add_argument('--use_mlp', action='store_true', help='use MLP')
+    parser.add_argument('--use_ltn', action='store_true', help='use constrainted loss during training')
+    parser.add_argument('--nesy_constr', type=int, default=1, choices=[0,1,2], help='constraints version to be employed')
+    parser.add_argument('--aggr_p', default=2, type=int, help='aggregator p-mean norm  value used during universal quantification')
+    parser.add_argument('--step_p', default=-1, type=int, help='aggregator p-mean step increase time used during universal quantification')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
-
+    parser.add_argument('--load_ckpt', action='store_true', help='load checkpoint from \
+                        the directory previously created for the current configuration')
 
     # config
     parser.add_argument('--batch', default=32, type=int, help='batch size')
@@ -49,8 +54,10 @@ def get_args_parser():
     parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
     parser.add_argument('--score_weight', default=10, type=float, help='score loss weight')
+    parser.add_argument('--nesy_weight', default=1, type=float, help='score loss weight')
     parser.add_argument('--p_syn', default=0.1, type=float, help='probability of changing POS in a phrase')
     parser.add_argument('--use_sgd', action='store_true', help='use SDG Optmizer')
+    parser.add_argument('--use_step_p', action='store_true', help='use step scheduler for p-mean of ForAll')
     parser.add_argument('--use_lamb', action='store_true', help='use LAMB Optimizer')
 
     # technicality 
@@ -70,6 +77,8 @@ def get_args_parser():
     parser.add_argument('--sw_high_bound',  type=int, help='high bound for the score weight loss')
     parser.add_argument('--ew_low_bound',  type=int, help='low bound for the embedding weight loss')
     parser.add_argument('--ew_high_bound',  type=int, help='high bound for the embedding weight loss')
+    parser.add_argument('--nw_low_bound',  type=float, help='low bound for the nesy weight loss')
+    parser.add_argument('--nw_high_bound',  type=float, help='high bound for the nesy weight loss')
     parser.add_argument('--optuna_job',  type=int, help='number of optuna jobs')
     parser.add_argument("--optuna_sampler", default='bayesian',type=str, choices=['normal','bayesian'])
 
@@ -97,6 +106,35 @@ def save_ckpt(
                     },
                get_ckpt_dir('best' if save_best else epoch, dir)
     )    
+
+
+def load_ckpt(
+    ckpt_dir:str,
+    net: torch.nn.Module,
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler.CyclicLR] = None
+    ) -> int:
+
+    ckpt = torch.load(ckpt_dir)
+
+    net.load_state_dict(ckpt['model_state_dict'])
+
+    optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+    scheduler.load_state_dict(['lr'])
+
+    torch.set_rng_state(ckpt['torch_state'])
+
+    epoch = ckpt['epoch']
+
+
+    return epoch
+
+
+
+
+
+
+
 
 def get_ckpt_dir(epoch:int, dir:str='' ) -> str:
     if  osp.exists(dir)==False:
