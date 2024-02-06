@@ -211,11 +211,10 @@ def experiment(args)->torch.float:
             
 
             if args.use_ltn:
-
-                if epoch > 0 and args.step_p % epoch ==0:
-                    p_mean = criterion['nesy'].increase_p()
-                else:
-                    p_mean =criterion['nesy'].aggr_p
+                # increment p-mean value of aggregator norm
+                if epoch > 1 and args.use_step and args.step_p % (epoch-1) == 0:
+                    criterion['nesy'].increase_pmean()
+             
                 dict_log =  {
                             "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
                             "train/loss": train_loss['tot'],
@@ -229,7 +228,7 @@ def experiment(args)->torch.float:
                             "val/loss_score": val_loss['score'],
                             "val/loss_emb":   val_loss['emb'],
                             "val/loss_nesy":   val_loss['nesy'],
-                            "val/p_mean/ForAll": p_mean
+                            "val/p_mean/ForAll": criterion['nesy'].aggr_p
                         }
                 
                 

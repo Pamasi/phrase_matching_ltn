@@ -17,13 +17,14 @@ class NeSyLoss():
         Raises:
             ValueError: Invalid stragegy
         """
-        self.p_is_similar = ltn.Predicate(func=lambda anchor, candidate : 0.5 + F.cosine_similarity(anchor, candidate, dim = -1 )*0.5 )
+        # eps set to the same value used during predicate evaluation by LTNTorch
+        self.p_is_similar = ltn.Predicate(func=lambda anchor, candidate : 0.5 + F.cosine_similarity(anchor, candidate, dim = -1, eps=1e-4 )*0.5 )
         self.p_is_score = ltn.Predicate(func=lambda pred, tgt : torch.sum( pred * tgt , dim = -1 ))
 
         self.aggr_p = aggr_p
         self.forall = ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(p=aggr_p), quantifier='f')
         self.implies = ltn.Connective(ltn.fuzzy_ops.ImpliesReichenbach())
-        self.sat_axiom = ltn.fuzzy_ops.SatAgg(ltn.fuzzy_ops.AggregPMeanError())
+        self.sat_axiom = ltn.fuzzy_ops.SatAgg(ltn.fuzzy_ops.AggregPMeanError(p=2))
 
         self.pos_idx = pos_idx
 
@@ -36,21 +37,19 @@ class NeSyLoss():
         self.strategy = strategy
 
 
-    def increase_pmean(self, factor:int=2) -> int:
+    def increase_pmean(self, factor:int=2) -> None:
         """increase the p-mean of the ForAll aggregator by a factor 
 
         Args:
             factor (int, optional): multiplicative factor . Defaults to 2.
 
-        Returns:
-            int: current p-mean value of the aggregator norm
         """
 
         self.aggr_p*=factor
 
-        self.forall =  ltn.Quantifier(ltn.fuzzy_ops.AggregPMeanError(self.aggr_p), quantifier='f')
+        self.forall.agg_op.p = self.aggr_p
 
-        return self.aggr_p
+
 
     def __call__(self, anchor_emb:torch.Tensor, cand_emb:torch.Tensor,
                         pred_scores:torch.Tensor, tgt_scores:torch.Tensor) ->torch.Tensor:
@@ -117,6 +116,10 @@ class NeSyLoss():
 
             if self.strategy == 1:
                 if has_pos:
+                    # sanity check to have useful trackback in case of dumb predicate error
+                    check_val = self.p_is_similar(pred_scores_var_p, tgt_scores_var_p).value
+                    assert (check_val <= 1.0).all(), f'{check_val} is not in range'
+
                     out_pos  = self.forall( ltn.diag(anchor_emb_var_p, cand_emb_var_p, pred_scores_var_p, tgt_scores_var_p),
                                             self.implies(self.p_is_similar(anchor_emb_var_p, cand_emb_var_p), 
                                                             self.p_is_score(pred_scores_var_p, tgt_scores_var_p)
@@ -125,6 +128,10 @@ class NeSyLoss():
 
 
                 if has_neg:
+                    # sanity check to have useful trackback in case of dumb predicate error
+                    check_val = self.p_is_similar(pred_scores_var_n, tgt_scores_var_n).value
+                    assert (check_val <= 1.0).all(), f'{check_val} is not in range'
+
                     out_neg  = self.forall( ltn.diag(anchor_emb_var_n, cand_emb_var_n, pred_scores_var_n, tgt_scores_var_n),
                                             self.implies(self.p_is_similar(anchor_emb_var_n, cand_emb_var_n), 
                                                             self.p_is_score(pred_scores_var_n, tgt_scores_var_n)
