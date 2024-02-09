@@ -102,7 +102,7 @@ def experiment(args)->torch.float:
 
     # reproducibility
     torch.manual_seed(args.seed)    
-    random.seed(23)
+    random.seed(args.seed)
     
     # configure metrics
     metric_ap = MulticlassAveragePrecision(num_classes=args.score_level, average="macro", thresholds=None).to(args.device)
@@ -115,8 +115,8 @@ def experiment(args)->torch.float:
    
     if args.cross_val:
         # manually defined the fold to be used
-        train_fold = [ 0,1,2 ]
-        val_fold = [ [1,2], [0,2], [0, 1]]
+        train_fold = [ [1,2], [0,2], [0, 1]]
+        val_fold = [ 0,1,2 ]
 
     else:
         # hold-out 
@@ -211,47 +211,67 @@ def experiment(args)->torch.float:
             offset_epoch = 0
 
         for epoch in trange(offset_epoch, args.n_epoch):
-            # step
-
+            
+      
+            train_loss = {}
+            train_fold_loss = {}
             val_loss = {}
             val_metric = {}
-            for i_train, i_val in zip(train_fold, val_fold):
-                train_loss= train_step(train_loader[i_train], args.device, model, optimizer, 
-                                    criterion, lr_scheduler=lr_scheduler, 
-                                    move_to_gpu=PatentCollator.move_to_gpu,
-                                    max_norm=args.clip_norm, use_ltn=args.use_ltn)
 
-
-                for idx_fold in i_val:                                                                      
-                    vali_loss, vali_metric   = val_step(val_loader[idx_fold], args.device, model, 
-                                                criterion, move_to_gpu=PatentCollator.move_to_gpu, 
-                                                metric=metric, use_ltn=args.use_ltn)
-                    
-                    if len(i_val) > 1:
-                        if len(val_loss) > 0 and len(val_loss) > 0:
-                            for k in vali_loss.keys():
-                                val_loss[k] += vali_loss[k]/args.n_fold
-
-                            for k in vali_metric.keys():
-                                val_metric[k]  += vali_metric[k]/args.n_fold 
-
-                        else:
-                            for k in vali_loss.keys():
-                                val_loss[k] = vali_loss[k]
-
-                            for k in vali_metric.keys():
-                                val_metric[k]  = vali_metric[k] 
-
-
-
-                        
+            for i in range(args.n_fold):
                 
+                for idx_fold  in train_fold[i]:
+                    train_i_loss = train_step(train_loader[idx_fold], args.device, model, optimizer, 
+                                        criterion, lr_scheduler=lr_scheduler, 
+                                        move_to_gpu=PatentCollator.move_to_gpu,
+                                        max_norm=args.clip_norm, use_ltn=args.use_ltn)
+                
+                    # check if cross validation is enabled and a result has already been saved
+                    if len(train_fold[i]) > 1 and len(train_fold_loss) > 0 :
+                        # incrementally save the training performance for all proper folds
+                        for k in train_i_loss.keys():
+                            train_fold_loss[k] = train_fold_loss[k]  + train_i_loss[k]/(args.n_fold -1 )
+
+                    else:
+                        for k in train_i_loss.keys():
+                            train_fold_loss[k] = train_i_loss[k]/(args.n_fold -1 )
+
+    
+                # test against the fold from the val set                                                  
+                val_i_loss, val_i_metric   = val_step(val_loader[i], args.device, model, 
+                                            criterion, move_to_gpu=PatentCollator.move_to_gpu, 
+                                            metric=metric, use_ltn=args.use_ltn)
+                    
+            
+                # check if cross validation is enabled
+                if len(val_loss) > 0 and len(val_metric) > 0:
+                    print("\nCROSS VALIDATION ERROR ESTIMATE")
+
+                    # incrementally save the validation performance for all folds
+                    for k in val_i_loss.keys():
+                        val_loss[k]   = val_loss[k] + val_i_loss[k] / (args.n_fold)
+
+                    for k in val_i_metric.keys():
+                        val_metric[k] = val_metric[k] + val_i_metric[k] / (args.n_fold)
+
+                else:
+                    for k in val_i_loss.keys():
+                        val_loss[k]    = val_i_loss[k] / (args.n_fold)
+
+                    for k in val_i_metric.keys():
+                        val_metric[k]  = val_i_metric[k] / (args.n_fold)
+
+            for k in train_fold_loss.keys():
+                train_loss[k] = train_fold_loss[k] / args.n_fold
+
+            
+           
 
             if args.use_ltn:
                 # increment p-mean value of aggregator norm
                 if epoch > 1 and args.use_step_p and args.step_p % (epoch-1) == 0:
                     criterion['nesy'].increase_pmean()
-             
+            
                 dict_log =  {
                             "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
                             "train/loss": train_loss['tot'],
