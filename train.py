@@ -111,6 +111,19 @@ def experiment(args)->torch.float:
 
     metric = { 'ap': metric_ap, 'ar': metric_ar, 'acc': metric_acc}
 
+
+   
+    if args.cross_val:
+        # manually defined the fold to be used
+        train_fold = [ 0,1,2 ]
+        val_fold = [ [1,2], [0,2], [0, 1]]
+
+    else:
+        # hold-out 
+        train_fold = [0]
+        val_fold   = [0]
+
+    
     # configure wandb 
     if args.no_track==False:
         wandb.login()
@@ -164,10 +177,14 @@ def experiment(args)->torch.float:
         if args.lr_range_test:
             wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
         
+        if args.cross_val:
+            wandb_run_name = wandb_run_name + '_CROSS_VAL'
+
         run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True, tags=wandb_tag)  
 
         # automate the name folder
         args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
+
 
 
 
@@ -183,12 +200,7 @@ def experiment(args)->torch.float:
             
             it = lr_range_test(it, train_loader, val_loader, args.device, model, optimizer, lr_scheduler,
                                 criterion, move_to_gpu=PatentCollator.move_to_gpu, run=run, metric=metric)
-        # plt.plot(range(len(loss_step)), loss_step)
-        # plt.title('LR RangeTest')
-        # plt.xlabel('Step')
-        # plt.ylabel('Learning Rate')
 
-        # plt.savefig(f'{args.dir}/lr_range_test.jpg')
   
     else:
         #
@@ -200,19 +212,44 @@ def experiment(args)->torch.float:
 
         for epoch in trange(offset_epoch, args.n_epoch):
             # step
-            train_loss= train_step(train_loader, args.device, model, optimizer, 
-                                criterion, lr_scheduler=lr_scheduler, 
-                                move_to_gpu=PatentCollator.move_to_gpu,
-                                  max_norm=args.clip_norm, use_ltn=args.use_ltn)
-                                                                                            
-            val_loss, val_metric   = val_step(val_loader, args.device, model, 
-                                        criterion, move_to_gpu=PatentCollator.move_to_gpu, 
-                                        metric=metric, use_ltn=args.use_ltn)
-            
+
+            val_loss = {}
+            val_metric = {}
+            for i_train, i_val in zip(train_fold, val_fold):
+                train_loss= train_step(train_loader[i_train], args.device, model, optimizer, 
+                                    criterion, lr_scheduler=lr_scheduler, 
+                                    move_to_gpu=PatentCollator.move_to_gpu,
+                                    max_norm=args.clip_norm, use_ltn=args.use_ltn)
+
+
+                for idx_fold in i_val:                                                                      
+                    vali_loss, vali_metric   = val_step(val_loader[idx_fold], args.device, model, 
+                                                criterion, move_to_gpu=PatentCollator.move_to_gpu, 
+                                                metric=metric, use_ltn=args.use_ltn)
+                    
+                    if len(i_val) > 1:
+                        if len(val_loss) > 0 and len(val_loss) > 0:
+                            for k in vali_loss.keys():
+                                val_loss[k] += vali_loss[k]/args.n_fold
+
+                            for k in vali_metric.keys():
+                                val_metric[k]  += vali_metric[k]/args.n_fold 
+
+                        else:
+                            for k in vali_loss.keys():
+                                val_loss[k] = vali_loss[k]
+
+                            for k in vali_metric.keys():
+                                val_metric[k]  = vali_metric[k] 
+
+
+
+                        
+                
 
             if args.use_ltn:
                 # increment p-mean value of aggregator norm
-                if epoch > 1 and args.use_step and args.step_p % (epoch-1) == 0:
+                if epoch > 1 and args.use_step_p and args.step_p % (epoch-1) == 0:
                     criterion['nesy'].increase_pmean()
              
                 dict_log =  {
@@ -225,8 +262,8 @@ def experiment(args)->torch.float:
                             "val/ap":  val_metric['ap'],
                             "val/ar":  val_metric['ar'],
                             "val/loss": val_loss['tot'],
-                            "val/loss_score": val_loss['score'],
-                            "val/loss_emb":   val_loss['emb'],
+                            "val/loss_score":  val_loss['score'],
+                            "val/loss_emb":    val_loss['emb'],
                             "val/loss_nesy":   val_loss['nesy'],
                             "val/p_mean/ForAll": criterion['nesy'].aggr_p
                         }
@@ -286,15 +323,30 @@ def create_loader(args):
     path_val =  os.path.join(os.getcwd(), args.path_val)
     
     torch.cuda.set_device(0)
-    train_data = PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level)
-    val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True, score_level=args.score_level)
-
     collate_fn = PatentCollator()
 
-    train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
-                               num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
-                            num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
+    if args.cross_val:
+        train_loader = []
+        val_loader = []
+
+        for i in range(args.n_fold):
+            train_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level) 
+            val_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer, args.max_len, args.seed, p_syn=args.p_syn, is_val=True, score_level=args.score_level) 
+
+            train_loader.append( DataLoader(train_data, batch_size=args.batch, shuffle=True,
+                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True))
+            val_loader.append( DataLoader(val_data, batch_size=args.batch, shuffle=True, 
+                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False) )
+    
+    else:
+        train_data =PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level) 
+        val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True, score_level=args.score_level)
+
+
+        train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
+                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
+                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
                             
     return train_loader,val_loader
 

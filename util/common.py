@@ -18,6 +18,10 @@ def get_args_parser():
     parser.add_argument('--path_val', default='data/processed/val.csv', type=str,
                         help="data path of val set")
     
+    parser.add_argument('--cross_val', action='store_true', help='use cross validation')
+    parser.add_argument('--n_fold',  default=3, type=int, help='number of folds use during cross validation')
+    parser.add_argument('--data_dir', default='data/processed', help='folder where cross validation annotations are stored')
+    
     # network
     parser.add_argument('--max_len', default=130, type=int, help='max length of the tokenizer')
     parser.add_argument('--qlora', action='store_true', help='use qlora')
@@ -32,7 +36,9 @@ def get_args_parser():
     parser.add_argument('--step_p', default=-1, type=int, help='aggregator p-mean step increase time used during universal quantification')
     parser.add_argument('--freeze_emb', action='store_true', help='freeze embedding')
     parser.add_argument('--load_ckpt', action='store_true', help='load checkpoint from \
-                        the directory previously created for the current configuration')
+                        the directory previously created for the current configuration') 
+    
+
 
     # config
     parser.add_argument('--batch', default=32, type=int, help='batch size')
