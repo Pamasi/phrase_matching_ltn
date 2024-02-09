@@ -245,8 +245,6 @@ def experiment(args)->torch.float:
             
                 # check if cross validation is enabled
                 if len(val_loss) > 0 and len(val_metric) > 0:
-                    print("\nCROSS VALIDATION ERROR ESTIMATE")
-
                     # incrementally save the validation performance for all folds
                     for k in val_i_loss.keys():
                         val_loss[k]   = val_loss[k] + val_i_loss[k] / (args.n_fold)
