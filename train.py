@@ -267,7 +267,7 @@ def experiment(args)->torch.float:
 
             if args.use_ltn:
                 # increment p-mean value of aggregator norm
-                if epoch > 1 and args.use_step_p and args.step_p % (epoch-1) == 0:
+                if epoch > 1 and args.use_step_p and ( (epoch -1) % args.step_p )== 0:
                     criterion['nesy'].increase_pmean()
             
                 dict_log =  {
