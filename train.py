@@ -1,4 +1,7 @@
-import argparse, os, sys, logging
+import argparse
+import os
+import sys
+import logging
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -30,265 +33,252 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.benchmark = False
 
 os.environ["WANDB_START_METHOD"] = "thread"
-#os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
+# os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
 
 
-
-
-
-def experiment(args)->torch.float:
- 
+def experiment(args) -> torch.float:
 
     train_loader, val_loader = create_loader(args)
-    
-    model = PhraseEncoder(args.model_name, args.score_level, 
-                          use_qlora=args.qlora, qlora_rank=args.qlora_rank, 
-                          qlora_alpha=args.qlora_alpha, qlora_last=args.qlora_last_layer,  
+
+    model = PhraseEncoder(args.model_name, args.score_level,
+                          use_qlora=args.qlora, qlora_rank=args.qlora_rank,
+                          qlora_alpha=args.qlora_alpha, qlora_last=args.qlora_last_layer,
                           freeze_emb=args.freeze_emb,  use_mlp=args.use_mlp)
     model.to(args.device)
 
     if args.use_sgd:
-        optimizer = torch.optim.SGD(params =  model.parameters(), lr=args.lr)
+        optimizer = torch.optim.SGD(params=model.parameters(), lr=args.lr)
     elif args.use_lamb:
         optimizer = LAMB(model.parameters(), lr=args.lr, eps=1e-12)
     else:
-        optimizer = torch.optim.Adam(params =  model.parameters(), lr=args.lr, eps=1e-12)
+        optimizer = torch.optim.Adam(
+            params=model.parameters(), lr=args.lr, eps=1e-12)
 
     if args.lr_range_test:
-        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: step*2 )
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda step: step*2)
         loss_step = []
     elif args.use_linear_scheduler:
         lr_scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                num_warmup_steps=0,
-                                                num_training_steps=args.n_epoch*args.step_epoch)
+                                                       num_warmup_steps=0,
+                                                       num_training_steps=args.n_epoch*args.step_epoch)
     elif args.no_scheduler:
         lr_scheduler = None
     else:
-        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max, 
-                                                         epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max,
+                                                           epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
 
     match args.cls_loss:
         case 'CE':
             cls_loss = CrossEntropyLoss()
         case 'BCE':
             cls_loss = BCEWithLogitsLoss()
-        
+
         case 'L1':
             cls_loss = L1Loss()
-        
+
         case 'MSE':
             cls_loss = MSELoss()
-        
+
         case _:
             raise ValueError(f'{args.cls_loss} is an invalid loss!')
-        
 
     if args.use_ltn:
-        criterion = { 'ce': cls_loss, 
-            'sim': CosineEmbeddingLoss(), 
-            'nesy': NeSyLoss(aggr_p=args.aggr_p, strategy=args.nesy_constr),
-            'emb_weight':args.emb_weight,
-            'score_weight':args.score_weight,
-            'nesy_weight':args.nesy_weight}        
-
+        criterion = {'ce': cls_loss,
+                     'sim': CosineEmbeddingLoss(),
+                     'nesy': NeSyLoss(sat_p=args.sat_p, uq_p=args.uq_p, strategy=args.nesy_constr),
+                     'emb_weight': args.emb_weight,
+                     'score_weight': args.score_weight,
+                     'nesy_weight': args.nesy_weight}
 
     else:
-        criterion = { 'ce': cls_loss, 
-                    'sim': CosineEmbeddingLoss(), 
-                    'emb_weight':args.emb_weight,
-                    'score_weight':args.score_weight}
-    
-
+        criterion = {'ce': cls_loss,
+                     'sim': CosineEmbeddingLoss(),
+                     'emb_weight': args.emb_weight,
+                     'score_weight': args.score_weight}
 
     # reproducibility
-    torch.manual_seed(args.seed)    
+    torch.manual_seed(args.seed)
     random.seed(args.seed)
-    
+
     # configure metrics
-    metric_ap = MulticlassAveragePrecision(num_classes=args.score_level, average="macro", thresholds=None).to(args.device)
-    metric_acc = MulticlassAccuracy(num_classes=args.score_level, average="macro").to(args.device)
-    metric_ar = MulticlassRecall(num_classes=args.score_level, average='macro').to(args.device)
+    metric_ap = MulticlassAveragePrecision(
+        num_classes=args.score_level, average="macro", thresholds=None).to(args.device)
+    metric_acc = MulticlassAccuracy(
+        num_classes=args.score_level, average="macro").to(args.device)
+    metric_ar = MulticlassRecall(
+        num_classes=args.score_level, average='macro').to(args.device)
 
-    metric = { 'ap': metric_ap, 'ar': metric_ar, 'acc': metric_acc}
+    metric = {'ap': metric_ap, 'ar': metric_ar, 'acc': metric_acc}
 
-
-   
     if args.cross_val:
         # manually defined the fold to be used
-        train_fold = [ [1,2], [0,2], [0, 1]]
-        val_fold = [ 0,1,2 ]
+        train_fold = [[1, 2], [0, 2], [0, 1]]
 
     else:
-        # hold-out 
+        # hold-out
         train_fold = [0]
-        val_fold   = [0]
 
-    
-    # configure wandb 
-    if args.no_track==False:
+    # configure wandb
+    if args.no_track == False:
         wandb.login()
 
         wandb_run_name = f'TEXT_{args.cls_loss}_SW{int(args.score_weight)}_EW{int(args.emb_weight)}_B{args.batch}_LR{args.lr}'
         wandb_tag = []
 
-        
         if args.qlora:
             if args.qlora_last_layer:
-                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}LAST' + '_' + wandb_run_name
+                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}LAST' + \
+                    '_' + wandb_run_name
 
             else:
-                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + '_' + wandb_run_name
+                wandb_run_name = f'QR{args.qlora_rank}A{args.qlora_alpha}' + \
+                    '_' + wandb_run_name
 
         if args.use_ltn:
-            wandb_run_name = wandb_run_name + f'NESY{round(args.nesy_weight,4)}' 
+            wandb_run_name = wandb_run_name + \
+                f'NESY{round(args.nesy_weight,4)}_SAT{args.sat_p}_UQ{args.uq_p}'
 
-            if args.step_p>0:
+            if args.step_p > 0:
                 wandb_tag.append(f'linear_p@{args.step_p}')
 
-                wandb_run_name = wandb_run_name + f'LINEAR_P' 
+                wandb_run_name = wandb_run_name + f'LINEAR_P'
 
             wandb_tag.extend(['ltn, 'f'nesy_v{args.nesy_constr}'])
 
-                    
-        if args.model_name.find('distilbert')>=0:
-            wandb_run_name = wandb_run_name   + '_DISTILBERT'
-        elif args.model_name.find('electra')>=0:
-            wandb_run_name = wandb_run_name   + '_ELECTRA'
-        elif args.model_name.find('albert')>=0:
-            wandb_run_name = wandb_run_name   + '_ALBERT'
-        elif args.model_name.find('distilroberta-base')>=0:
-            wandb_run_name = wandb_run_name   + '_HUPD_DISTILROBERTA'
+        if args.model_name.find('distilbert') >= 0:
+            wandb_run_name = wandb_run_name + '_DISTILBERT'
+        elif args.model_name.find('electra') >= 0:
+            wandb_run_name = wandb_run_name + '_ELECTRA'
+        elif args.model_name.find('albert') >= 0:
+            wandb_run_name = wandb_run_name + '_ALBERT'
+        elif args.model_name.find('distilroberta-base') >= 0:
+            wandb_run_name = wandb_run_name + '_HUPD_DISTILROBERTA'
 
         if args.use_mlp:
-            wandb_run_name = wandb_run_name   + '_MLP'
+            wandb_run_name = wandb_run_name + '_MLP'
         elif args.use_gru:
-            wandb_run_name = wandb_run_name   + '_GRU'
+            wandb_run_name = wandb_run_name + '_GRU'
         if args.freeze_emb:
-            wandb_run_name = wandb_run_name   + '_FREEZE_EMB'
+            wandb_run_name = wandb_run_name + '_FREEZE_EMB'
 
         if args.use_sgd:
-            wandb_run_name = wandb_run_name   + '_SGD'
+            wandb_run_name = wandb_run_name + '_SGD'
         elif args.use_lamb:
-            wandb_run_name = wandb_run_name   + '_LAMB'
+            wandb_run_name = wandb_run_name + '_LAMB'
         else:
-            wandb_run_name = wandb_run_name   + '_ADAM'
-
+            wandb_run_name = wandb_run_name + '_ADAM'
 
         if args.lr_range_test:
-            wandb_run_name = wandb_run_name   + '_LR_RANGE_TEST'
-        
+            wandb_run_name = wandb_run_name + '_LR_RANGE_TEST'
+
         if args.cross_val:
             wandb_run_name = wandb_run_name + '_CROSS_VAL'
 
-        run = wandb.init(project='phrase_matching', config=args, name=wandb_run_name,  reinit=True, tags=wandb_tag)  
+        run = wandb.init(project='phrase_matching', config=args,
+                         name=wandb_run_name,  reinit=True, tags=wandb_tag)
 
         # automate the name folder
-        args.dir = str(wandb_run_name).replace(".", "_").replace('-','m')
+        args.dir = str(wandb_run_name).replace(".", "_").replace('-', 'm')
 
+    best_ap = 0
 
-
-
-    best_ap = 0 
-        
     if args.lr_range_test:
-        it =0 
+        it = 0
 
         if lr_scheduler is None:
             raise ValueError('Learning rate scheduler cannot be None')
-        
-        for epoch in trange(args.n_epoch):
-            
-            it = lr_range_test(it, train_loader, val_loader, args.device, model, optimizer, lr_scheduler,
-                                criterion, move_to_gpu=PatentCollator.move_to_gpu, run=run, metric=metric)
 
-  
+        for epoch in trange(args.n_epoch):
+
+            it = lr_range_test(it, train_loader, val_loader, args.device, model, optimizer, lr_scheduler,
+                               criterion, move_to_gpu=PatentCollator.move_to_gpu, run=run, metric=metric)
+
     else:
         #
         if args.load_ckpt:
-            offset_epoch = load_ckpt(f'{args.dir}/ckpt_best', model, optimizer, lr_scheduler)
+            offset_epoch = load_ckpt(
+                f'{args.dir}/ckpt_best', model, optimizer, lr_scheduler)
 
         else:
             offset_epoch = 0
 
         for epoch in trange(offset_epoch, args.n_epoch):
-            
-      
+
             train_loss = {}
             train_fold_loss = {}
             val_loss = {}
             val_metric = {}
 
             for i in range(args.n_fold):
-                
-                for idx_fold  in train_fold[i]:
-                    train_i_loss = train_step(train_loader[idx_fold], args.device, model, optimizer, 
-                                        criterion, lr_scheduler=lr_scheduler, 
-                                        move_to_gpu=PatentCollator.move_to_gpu,
-                                        max_norm=args.clip_norm, use_ltn=args.use_ltn)
-                
+
+                for idx_fold in train_fold[i]:
+                    train_i_loss = train_step(train_loader[idx_fold], args.device, model, optimizer,
+                                              criterion, lr_scheduler=lr_scheduler,
+                                              move_to_gpu=PatentCollator.move_to_gpu,
+                                              max_norm=args.clip_norm, use_ltn=args.use_ltn)
+
                     # check if cross validation is enabled and a result has already been saved
-                    if len(train_fold[i]) > 1 and len(train_fold_loss) > 0 :
+                    if len(train_fold[i]) > 1 and len(train_fold_loss) > 0:
                         # incrementally save the training performance for all proper folds
                         for k in train_i_loss.keys():
-                            train_fold_loss[k] = train_fold_loss[k]  + train_i_loss[k]/(args.n_fold -1 )
+                            train_fold_loss[k] = train_fold_loss[k] + \
+                                train_i_loss[k]/(args.n_fold - 1)
 
                     else:
                         for k in train_i_loss.keys():
-                            train_fold_loss[k] = train_i_loss[k]/(args.n_fold -1 )
+                            train_fold_loss[k] = train_i_loss[k] / \
+                                (args.n_fold - 1)
 
-    
-                # test against the fold from the val set                                                  
-                val_i_loss, val_i_metric   = val_step(val_loader[i], args.device, model, 
-                                            criterion, move_to_gpu=PatentCollator.move_to_gpu, 
-                                            metric=metric, use_ltn=args.use_ltn)
-                    
-            
+                # test against the fold from the val set
+                val_i_loss, val_i_metric = val_step(val_loader[i], args.device, model,
+                                                    criterion, move_to_gpu=PatentCollator.move_to_gpu,
+                                                    metric=metric, use_ltn=args.use_ltn)
+
                 # check if cross validation is enabled
                 if len(val_loss) > 0 and len(val_metric) > 0:
                     # incrementally save the validation performance for all folds
                     for k in val_i_loss.keys():
-                        val_loss[k]   = val_loss[k] + val_i_loss[k] / (args.n_fold)
+                        val_loss[k] = val_loss[k] + \
+                            val_i_loss[k] / (args.n_fold)
 
                     for k in val_i_metric.keys():
-                        val_metric[k] = val_metric[k] + val_i_metric[k] / (args.n_fold)
+                        val_metric[k] = val_metric[k] + \
+                            val_i_metric[k] / (args.n_fold)
 
                 else:
                     for k in val_i_loss.keys():
-                        val_loss[k]    = val_i_loss[k] / (args.n_fold)
+                        val_loss[k] = val_i_loss[k] / (args.n_fold)
 
                     for k in val_i_metric.keys():
-                        val_metric[k]  = val_i_metric[k] / (args.n_fold)
+                        val_metric[k] = val_i_metric[k] / (args.n_fold)
 
             for k in train_fold_loss.keys():
                 train_loss[k] = train_fold_loss[k] / args.n_fold
 
-            
-           
-
             if args.use_ltn:
                 # increment p-mean value of aggregator norm
-                if epoch > 1 and args.use_step_p and ( (epoch -1) % args.step_p )== 0:
+                if epoch > 1 and args.use_step_p and ((epoch - 1) % args.step_p) == 0:
                     criterion['nesy'].increase_pmean()
-            
-                dict_log =  {
-                            "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
-                            "train/loss": train_loss['tot'],
-                            "train/loss_score": train_loss['score'],
-                            "train/loss_emb": train_loss['emb'],
-                            "train/loss_nesy": train_loss['nesy'],
-                            "val/acc": val_metric['acc'],
-                            "val/ap":  val_metric['ap'],
-                            "val/ar":  val_metric['ar'],
-                            "val/loss": val_loss['tot'],
-                            "val/loss_score":  val_loss['score'],
-                            "val/loss_emb":    val_loss['emb'],
-                            "val/loss_nesy":   val_loss['nesy'],
-                            "val/p_mean/ForAll": criterion['nesy'].aggr_p
-                        }
-                
-                
+
+                dict_log = {
+                    "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
+                    "train/loss": train_loss['tot'],
+                    "train/loss_score": train_loss['score'],
+                    "train/loss_emb": train_loss['emb'],
+                    "train/loss_nesy": train_loss['nesy'],
+                    "val/acc": val_metric['acc'],
+                    "val/ap":  val_metric['ap'],
+                    "val/ar":  val_metric['ar'],
+                    "val/loss": val_loss['tot'],
+                    "val/loss_score":  val_loss['score'],
+                    "val/loss_emb":    val_loss['emb'],
+                    "val/loss_nesy":   val_loss['nesy'],
+                    "val/p_mean/ForAll": criterion['nesy'].uq_p
+                }
+
             else:
-                dict_log =  {
+                dict_log = {
                     "lr": lr_scheduler.get_last_lr()[0] if lr_scheduler is not None else args.lr,
                     "train/loss": train_loss['tot'],
                     "train/loss_score": train_loss['score'],
@@ -300,10 +290,9 @@ def experiment(args)->torch.float:
                     "val/loss_score": val_loss['score'],
                     "val/loss_emb":   val_loss['emb']
                 }
-            
-                
-            if args.no_track==False:
-                wandb.log(dict_log )
+
+            if args.no_track == False:
+                wandb.log(dict_log)
 
                 run.log_code()
 
@@ -315,31 +304,34 @@ def experiment(args)->torch.float:
                 loss_step.extend(train_loss['loss4step'])
 
                 for val in val_loss['loss4step']:
-                    wandb.log({'val/step':val}  )
+                    wandb.log({'val/step': val})
             elif val_metric['ap'] > best_ap:
-                    best_ap = val_metric['ap']
-                    save_ckpt(model, epoch, train_loss['tot'],
-                            optimizer, lr_scheduler,args.dir, torch.get_rng_state(), save_best=True)
-                
-
+                best_ap = val_metric['ap']
+                save_ckpt(model, epoch, train_loss['tot'],
+                          optimizer, lr_scheduler, args.dir, torch.get_rng_state(), save_best=True)
 
     return {'accuracy': val_metric['acc'].item()}
+
 
 def create_loader(args):
     print(f'model name ={args.model_name}')
 
-    if args.model_name.find('distilbert')>=0:
-        tokenizer =  DistilBertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
-    elif args.model_name.find('electra')>0:
-        tokenizer =  ElectraTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
-    elif args.model_name.find('albert')>=0:
-        tokenizer =  AlbertTokenizerFast.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
-    elif args.model_name.find('distilroberta-base')>=0:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name, truncation=True, do_lower_case=True)
+    if args.model_name.find('distilbert') >= 0:
+        tokenizer = DistilBertTokenizerFast.from_pretrained(
+            args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('electra') > 0:
+        tokenizer = ElectraTokenizerFast.from_pretrained(
+            args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('albert') >= 0:
+        tokenizer = AlbertTokenizerFast.from_pretrained(
+            args.model_name, truncation=True, do_lower_case=True)
+    elif args.model_name.find('distilroberta-base') >= 0:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name, truncation=True, do_lower_case=True)
 
-    path_train =  os.path.join(os.getcwd(), args.path_train)
-    path_val =  os.path.join(os.getcwd(), args.path_val)
-    
+    path_train = os.path.join(os.getcwd(), args.path_train)
+    path_val = os.path.join(os.getcwd(), args.path_val)
+
     torch.cuda.set_device(0)
     collate_fn = PatentCollator()
 
@@ -348,33 +340,37 @@ def create_loader(args):
         val_loader = []
 
         for i in range(args.n_fold):
-            train_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level) 
-            val_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer, args.max_len, args.seed, p_syn=args.p_syn, is_val=True, score_level=args.score_level) 
+            train_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer,
+                                       args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level)
+            val_data = PatentDataset(f'{args.data_dir}/fold{i}.csv', tokenizer, args.max_len,
+                                     args.seed, p_syn=args.p_syn, is_val=True, score_level=args.score_level)
 
-            train_loader.append( DataLoader(train_data, batch_size=args.batch, shuffle=True,
-                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True))
-            val_loader.append( DataLoader(val_data, batch_size=args.batch, shuffle=True, 
-                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False) )
-    
+            train_loader.append(DataLoader(train_data, batch_size=args.batch, shuffle=True,
+                                           num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True))
+            val_loader.append(DataLoader(val_data, batch_size=args.batch, shuffle=True,
+                                         num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True, drop_last=False))
+
     else:
-        train_data =PatentDataset(path_train, tokenizer, args.max_len, args.seed, p_syn=args.p_syn, score_level=args.score_level) 
-        val_data = PatentDataset(path_val, tokenizer, args.max_len,args.seed, is_val=True, score_level=args.score_level)
-
+        train_data = PatentDataset(path_train, tokenizer, args.max_len,
+                                   args.seed, p_syn=args.p_syn, score_level=args.score_level)
+        val_data = PatentDataset(path_val, tokenizer, args.max_len,
+                                 args.seed, is_val=True, score_level=args.score_level)
 
         train_loader = DataLoader(train_data, batch_size=args.batch, shuffle=True,
-                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True, 
-                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True,persistent_workers=True, drop_last=False)
-                            
-    return train_loader,val_loader
+                                  num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(val_data, batch_size=args.batch, shuffle=True,
+                                num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=True, persistent_workers=True, drop_last=False)
 
-def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         optimizer:torch.optim, lr_scheduler:torch.optim.lr_scheduler, 
-         criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable, metric: Optional[Dict[str, Metric]]=None,
-         run:Optional[wandb.run]=None,
-         use_ltn:bool=False
-         ) -> int:
+    return train_loader, val_loader
+
+
+def lr_range_test(it: int, train_loader: DataLoader,  val_loader: DataLoader, device: torch.device, model: torch.nn.Module,
+                  optimizer: torch.optim, lr_scheduler: torch.optim.lr_scheduler,
+                  criterion: Dict[str, torch.nn.Module],
+                  move_to_gpu: Callable, metric: Optional[Dict[str, Metric]] = None,
+                  run: Optional[wandb.run] = None,
+                  use_ltn: bool = False
+                  ) -> int:
     """ execute a step of one epoch
 
     Args:
@@ -394,70 +390,61 @@ def lr_range_test(it:int, train_loader:DataLoader,  val_loader:DataLoader, devic
     Returns:
         int: last iteration
     """
-    
-
 
     for anchors_cpu, targets_cpu, target_scores_cpu in train_loader:
-        anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
+        anchors, targets, target_scores = move_to_gpu(
+            device, anchors_cpu, targets_cpu, target_scores_cpu)
         (latent1, latent2, out_scores) = model(anchors, targets)
 
         optimizer.zero_grad()
-        
-        train_loss_score = criterion['ce'](out_scores, target_scores)
-        
 
-        label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+        train_loss_score = criterion['ce'](out_scores, target_scores)
+
+        label_type = torch.tensor([-1 if torch.argmax(scores) < 2 else 1 for scores in target_scores],
+                                  dtype=torch.float32, device=target_scores.device)
 
         train_loss_emb = criterion['sim'](latent1, latent2, label_type)
 
+        train_loss_tot = train_loss_score * \
+            criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
 
-        
-        
-        train_loss_tot = train_loss_score*criterion['score_weight'] + train_loss_emb*criterion['emb_weight']
-        
         if use_ltn:
-            train_loss_tot += criterion['nesy'](latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
+            train_loss_tot += criterion['nesy'](
+                latent1, latent2, out_scores, target_scores)*criterion['nesy_weight']
 
         batch_loss += train_loss_tot
         train_loss_tot.backward()
         optimizer.step()
-            
-       
-        
-        val_loss, val_metric   = val_step(val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
-        
 
-        
-        dict_log =  {
-                    "lr": lr_scheduler.get_last_lr()[0],
-                    "train/loss": train_loss_tot,
-                    "train/loss_score": train_loss_score,
-                    "train/loss_emb": train_loss_emb,
-                    "val/acc": val_metric['acc'],
-                    "val/ap":  val_metric['ap'],
-                    "val/ar":  val_metric['ar'],
-                    "val/loss": val_loss['tot'],
-                    "val/loss_score": val_loss['score'],
-                    "val/loss_emb":   val_loss['emb']
-                }
-        
-        it+=1
-       
+        val_loss, val_metric = val_step(
+            val_loader, args.device, model,  criterion, move_to_gpu=PatentCollator.move_to_gpu, metric=metric)
 
-        wandb.log(dict_log )
+        dict_log = {
+            "lr": lr_scheduler.get_last_lr()[0],
+            "train/loss": train_loss_tot,
+            "train/loss_score": train_loss_score,
+            "train/loss_emb": train_loss_emb,
+            "val/acc": val_metric['acc'],
+            "val/ap":  val_metric['ap'],
+            "val/ar":  val_metric['ar'],
+            "val/loss": val_loss['tot'],
+            "val/loss_score": val_loss['score'],
+            "val/loss_emb":   val_loss['emb']
+        }
+
+        it += 1
+
+        wandb.log(dict_log)
 
         run.log_code()
 
+    return it
 
 
-        
-    return   it
-
-
-def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable, metric: Dict[str, Metric]=None,
-         use_ltn:bool=False) -> Tuple[Dict[str,torch.Tensor]]:
+def val_step(data_loader: DataLoader, device: torch.device, model: torch.nn.Module,
+             criterion: Dict[str, torch.nn.Module],
+             move_to_gpu: Callable, metric: Dict[str, Metric] = None,
+             use_ltn: bool = False) -> Tuple[Dict[str, torch.Tensor]]:
     """ execute a step of one epoch
 
     Args:
@@ -481,80 +468,72 @@ def val_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module,
     batch_loss_nesy = 0.0
     n_batch = len(data_loader)
 
-    model.eval() 
+    model.eval()
     # to reduce memory footprint
     with torch.no_grad():
         for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
-            anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
-           
+            anchors, targets, target_scores = move_to_gpu(
+                device, anchors_cpu, targets_cpu, target_scores_cpu)
+
             (latent1, latent2, out_scores) = model(anchors, targets)
 
             loss_score = criterion['ce'](out_scores, target_scores)
             batch_loss_score += loss_score
 
-            label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+            label_type = torch.tensor(
+                [-1 if torch.argmax(scores) < 2 else 1 for scores in target_scores], dtype=torch.float32, device=target_scores.device)
 
             loss_emb = criterion['sim'](latent1, latent2, label_type)
             batch_loss_emb += loss_emb
 
-
-            loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
+            loss = loss_score*criterion['score_weight'] + \
+                loss_emb*criterion['emb_weight']
 
             if use_ltn:
-                loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+                loss_nesy = criterion['nesy'](
+                    latent1, latent2, out_scores, target_scores)
                 batch_loss_nesy += loss_nesy
                 loss += loss_nesy*criterion['nesy_weight']
 
-
             batch_loss_tot += loss
-                
 
-            
             # one-hot encoding to spare gpu memory
-            tgt_list.append(torch.tensor([torch.argmax(scores) for scores in target_scores ], dtype=torch.long, device=target_scores.device))
+            tgt_list.append(torch.tensor([torch.argmax(
+                scores) for scores in target_scores], dtype=torch.long, device=target_scores.device))
             pred_list.append(out_scores)
-        
+
     # calculate metrics
     preds = torch.concat(pred_list)
-    tgts= torch.concat(tgt_list)
+    tgts = torch.concat(tgt_list)
 
     # pack results
-    res_metric = {  'ap': metric['ap'](preds, tgts),
-                    'ar':metric['ar'](preds, tgts),
-                    'acc': metric['acc'](preds, tgts)
-    }
+    res_metric = {'ap': metric['ap'](preds, tgts),
+                  'ar': metric['ar'](preds, tgts),
+                  'acc': metric['acc'](preds, tgts)
+                  }
 
     if use_ltn:
         res_loss = {'tot': batch_loss_tot/n_batch,
-                    'score':batch_loss_score/n_batch,
+                    'score': batch_loss_score/n_batch,
                     'emb': batch_loss_emb/n_batch,
                     'nesy': batch_loss_nesy/n_batch
-                }
-        
+                    }
+
     else:
         res_loss = {'tot': batch_loss_tot/n_batch,
-            'score':batch_loss_score/n_batch,
-            'emb': batch_loss_emb/n_batch
-        }
-        
-        
-    return  res_loss, res_metric
+                    'score': batch_loss_score/n_batch,
+                    'emb': batch_loss_emb/n_batch
+                    }
+
+    return res_loss, res_metric
 
 
-
-           
-
-                   
-
-
-
-
-def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Module, 
-         optimizer:torch.optim, criterion: Dict[str, torch.nn.Module], 
-         move_to_gpu: Callable,
-         lr_scheduler:Optional[torch.optim.lr_scheduler.LRScheduler]=None,
-         max_norm:float=0.1,
-         use_ltn:bool=False) -> Dict[str,torch.Tensor]:
+def train_step(data_loader: DataLoader, device: torch.device, model: torch.nn.Module,
+               optimizer: torch.optim, criterion: Dict[str, torch.nn.Module],
+               move_to_gpu: Callable,
+               lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+               max_norm: float = 0.1,
+               use_ltn: bool = False) -> Dict[str, torch.Tensor]:
     """ execute a step of one epoch
 
     Args:
@@ -571,7 +550,7 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
     Returns:
         Dict[str,torch.Tensor]:  loss results
     """
-    
+
     batch_loss_tot = 0.0
     batch_loss_score = 0.0
     batch_loss_emb = 0.0
@@ -580,32 +559,30 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
 
     model.train()
 
-
     for anchors_cpu, targets_cpu, target_scores_cpu in data_loader:
-        anchors, targets, target_scores = move_to_gpu(device, anchors_cpu, targets_cpu, target_scores_cpu)
+        anchors, targets, target_scores = move_to_gpu(
+            device, anchors_cpu, targets_cpu, target_scores_cpu)
         (latent1, latent2, out_scores) = model(anchors, targets)
 
         optimizer.zero_grad()
-        
-        loss_score = criterion['ce'](out_scores, target_scores )
+
+        loss_score = criterion['ce'](out_scores, target_scores)
         batch_loss_score += loss_score
 
-
-        
-
-        label_type = torch.tensor([ -1 if torch.argmax(scores) <2 else  1 for scores in target_scores ], dtype=torch.float32, device=target_scores.device)
+        label_type = torch.tensor([-1 if torch.argmax(scores) < 2 else 1 for scores in target_scores],
+                                  dtype=torch.float32, device=target_scores.device)
 
         loss_emb = criterion['sim'](latent1, latent2, label_type)
         batch_loss_emb += loss_emb
 
-        loss = loss_score*criterion['score_weight'] + loss_emb*criterion['emb_weight']
-
+        loss = loss_score*criterion['score_weight'] + \
+            loss_emb*criterion['emb_weight']
 
         if use_ltn:
-            loss_nesy = criterion['nesy'](latent1, latent2, out_scores, target_scores)
+            loss_nesy = criterion['nesy'](
+                latent1, latent2, out_scores, target_scores)
             batch_loss_nesy += loss_nesy
             loss += loss_nesy*criterion['nesy_weight']
-
 
         batch_loss_tot += loss
 
@@ -617,26 +594,25 @@ def train_step(data_loader:DataLoader, device:torch.device, model:torch.nn.Modul
         if lr_scheduler is not None:
             lr_scheduler.step()
 
-
-
     if use_ltn:
         res_loss = {'tot': batch_loss_tot/n_batch,
-                    'score':batch_loss_score/n_batch,
+                    'score': batch_loss_score/n_batch,
                     'emb': batch_loss_emb/n_batch,
                     'nesy': batch_loss_nesy/n_batch
-                }
-        
+                    }
+
     else:
         res_loss = {'tot': batch_loss_tot/n_batch,
-                    'score':batch_loss_score/n_batch,
+                    'score': batch_loss_score/n_batch,
                     'emb': batch_loss_emb/n_batch
-                }
-        
-        
-    return  res_loss
+                    }
+
+    return res_loss
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('DistilledBERT training and evaluation script', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser(
+        'DistilledBERT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
 
     if args.use_ax:
@@ -659,33 +635,32 @@ if __name__ == '__main__':
                 {
                     'name': 'score_weight',
                     'type': 'range',
-                    'bounds': [args.sw_low_bound, args.sw_high_bound], 
+                    'bounds': [args.sw_low_bound, args.sw_high_bound],
                     'value_type': 'int'
                 },
                 {
                     'name': 'emb_weight',
                     'type': 'range',
-                    'bounds': [args.ew_low_bound, args.ew_high_bound], 
+                    'bounds': [args.ew_low_bound, args.ew_high_bound],
                     'value_type': 'int'
                 },
                 {
                     'name': 'nesy_weight',
                     'type': 'range',
-                    'bounds': [args.nw_low_bound, args.nw_high_bound], 
+                    'bounds': [args.nw_low_bound, args.nw_high_bound],
                     'value_type': 'float',
                     'log_scale': True,
-                    
+
                 }
             ],
 
-            objectives={'accuracy': ObjectiveProperties(minimize=False)},  # The objective name and minimization setting.
-            parameter_constraints=['score_weight >= emb_weight', "nesy_weight <= 3"]
+            # The objective name and minimization setting.
+            objectives={'accuracy': ObjectiveProperties(minimize=False)},
+            parameter_constraints=[
+                'score_weight >= emb_weight', "nesy_weight <= 3"]
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
-
-
-
 
         for _ in range(args.n_trial):
             ax_client.get_max_parallelism()
@@ -697,12 +672,13 @@ if __name__ == '__main__':
             args.emb_weight = parameters['emb_weight']
             args.nesy_weight = parameters['nesy_weight']
 
-            ax_client.complete_trial(trial_index=trial_index, raw_data=experiment(args))
-
+            ax_client.complete_trial(
+                trial_index=trial_index, raw_data=experiment(args))
 
         best_parameters, values = ax_client.get_best_parameters()
         print(f'best parameters:{best_parameters}')
-        ax_client.get_contour_plot(param_x='score_weight', param_y='emb_weight', param_z='nesy_weight', metric_name="accuracy")
+        ax_client.get_contour_plot(
+            param_x='score_weight', param_y='emb_weight', param_z='nesy_weight', metric_name="accuracy")
         ax_client.get_optimization_trace()
 
         # save data
