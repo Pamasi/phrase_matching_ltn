@@ -55,8 +55,9 @@ def get_args_parser():
     parser.add_argument('--use_linear_scheduler', action='store_true', help='use a linear scheduler')
     parser.add_argument('--c_lr_min', default=2e-5, type=float)
     parser.add_argument('--c_lr_max', default=2e-3, type=float)
+    parser.add_argument('--pct_cycle', default=0.3, type=float)
     parser.add_argument('--margin', default=0.15, type=float)
-    parser.add_argument("--cls_loss", default='BCE',type=str, choices=['CE','BCE','L1', 'MSE'])
+    parser.add_argument("--cls_loss", default='MSE',type=str, choices=['CE','BCE','L1', 'MSE'])
     parser.add_argument('--clip_norm', default=0.1, type=float, help="max possible norm before clipping procedure")
     parser.add_argument('--step_epoch', default=2*998, type=int, help='number of step per epochs')
     parser.add_argument('--emb_weight', default=1, type=float, help='embedding loss weight')
@@ -76,8 +77,7 @@ def get_args_parser():
 
 
     # optuna
-    parser.add_argument('--use_optuna', action='store_true', help='use optuna to select hyperparameters')
-    parser.add_argument('--use_ax', action='store_true', help='use optuna to select hyperparameters')
+    parser.add_argument('--use_ax', action='store_true', help='use ax to select hyperparameters')
     parser.add_argument('--ax_name', type=str, help='name of the experiment')
     parser.add_argument('--n_trial', default=10, type=int, help='number of trial per study')
     parser.add_argument('--sw_low_bound',  type=int, help='low bound for the score weight loss')
@@ -86,9 +86,9 @@ def get_args_parser():
     parser.add_argument('--ew_high_bound',  type=int, help='high bound for the embedding weight loss')
     parser.add_argument('--nw_low_bound',  type=float, help='low bound for the nesy weight loss')
     parser.add_argument('--nw_high_bound',  type=float, help='high bound for the nesy weight loss')
-    parser.add_argument('--optuna_job',  type=int, help='number of optuna jobs')
-    parser.add_argument("--optuna_sampler", default='bayesian',type=str, choices=['normal','bayesian'])
-
+    parser.add_argument('--pct_low_bound',  type=float, default=0.6, help='low bound for the percentage cycle in OneCycleLR')
+    parser.add_argument('--pct_high_bound',  type=float, default=0.9, help='high bound for the percentage cycle in OneCycleLR')
+ 
     return parser
 
 

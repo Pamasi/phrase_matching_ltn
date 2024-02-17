@@ -36,7 +36,19 @@ os.environ["WANDB_START_METHOD"] = "thread"
 # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = "max_split_size_mb:4096"
 
 
-def experiment(args) -> torch.float:
+def experiment(args: argparse.Namespace) -> torch.float:
+    """run the experiment based on command line arguments
+
+    Args:
+        arg (argparse.Namespace): arguments froom the commmand line
+
+    Raises:
+        ValueError: Invalid Learning Rate Scheduler
+        ValueError: Invalid Classification Loss
+
+    Returns:
+        torch.float: accuracy of metric of the experiment
+    """
 
     train_loader, val_loader = create_loader(args)
 
@@ -66,7 +78,7 @@ def experiment(args) -> torch.float:
         lr_scheduler = None
     else:
         lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.c_lr_max,
-                                                           epochs=args.n_epoch, steps_per_epoch=args.step_epoch)
+                                                           epochs=args.n_epoch, pct_start=args.pct_cycle, steps_per_epoch=args.step_epoch)
 
     match args.cls_loss:
         case 'CE':
@@ -124,6 +136,9 @@ def experiment(args) -> torch.float:
         wandb.login()
 
         wandb_run_name = f'TEXT_{args.cls_loss}_SW{int(args.score_weight)}_EW{int(args.emb_weight)}_B{args.batch}_LR{args.lr}'
+        
+        if args.use_linear_scheduler == False:
+            wandb_run_name = f'{wandb_run_name}_PCT{args.pct_cycle}'
         wandb_tag = []
 
         if args.qlora:
@@ -313,7 +328,15 @@ def experiment(args) -> torch.float:
     return {'accuracy': val_metric['acc'].item()}
 
 
-def create_loader(args):
+def create_loader(args: argparse.Namespace) -> Tuple[DataLoader]:
+    """ create the PyTorch data loader according to the dataset split specified in command line arguments 
+
+    Args:
+        args (argparse.Namespace): command line arguments
+
+    Returns:
+        Tuple[DataLoader]: training and validation data loaders
+    """
     print(f'model name ={args.model_name}')
 
     if args.model_name.find('distilbert') >= 0:
@@ -623,7 +646,7 @@ if __name__ == '__main__':
                 GenerationStep(
                     model=Models.SOBOL,
                     num_trials=-1,  # How many trials should be produced from this generation step
-                    max_parallelism=5,  # Max parallelism for this step
+                    max_parallelism=10,  # Max parallelism for this step
                 )
             ]
         )
@@ -631,7 +654,12 @@ if __name__ == '__main__':
         ax_client.create_experiment(
             name=args.ax_name,  # The name of the experiment.
             parameters=[
-
+                {
+                    'name': 'pct_cycle',
+                    'type': 'range',
+                    'bounds': [args.pct_low_bound, args.pct_high_bound],
+                    'value_type': 'float'
+                },
                 {
                     'name': 'score_weight',
                     'type': 'range',
@@ -649,16 +677,17 @@ if __name__ == '__main__':
                     'type': 'range',
                     'bounds': [args.nw_low_bound, args.nw_high_bound],
                     'value_type': 'float',
-                    'log_scale': True,
 
                 }
             ],
 
             # The objective name and minimization setting.
             objectives={'accuracy': ObjectiveProperties(minimize=False)},
-            parameter_constraints=[
-                'score_weight >= emb_weight', "nesy_weight <= 3"]
+
             # parameter_constraints: Optional, a list of strings of form "p1 >= p2" or "p1 + p2 <= some_bound".
+            parameter_constraints=[
+                'score_weight >= emb_weight', 'emb_weight >= nesy_weight']
+
             # outcome_constraints: Optional, a list of strings of form "constrained_metric <= some_bound".
         )
 
@@ -667,10 +696,10 @@ if __name__ == '__main__':
 
             parameters, trial_index = ax_client.get_next_trial()
 
-            # TODO: refactor to be nicer
             args.score_weight = parameters['score_weight']
             args.emb_weight = parameters['emb_weight']
             args.nesy_weight = parameters['nesy_weight']
+            args.pct_cycle = parameters['pct_cycle']
 
             ax_client.complete_trial(
                 trial_index=trial_index, raw_data=experiment(args))
