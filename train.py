@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.nn import BCEWithLogitsLoss, CosineEmbeddingLoss, CrossEntropyLoss, L1Loss, MSELoss
+import wandb.wandb_run
 from flash.core.optimizers import LAMB
 from transformers import DistilBertTokenizerFast, ElectraTokenizerFast, AlbertTokenizerFast, get_linear_schedule_with_warmup, AutoTokenizer
 from tqdm import trange
@@ -13,7 +14,6 @@ from typing import Dict, Optional, Tuple, Callable
 import wandb
 import random
 from torchmetrics.classification import MulticlassAveragePrecision, MulticlassRecall,  MulticlassAccuracy
-from torchmetrics import Metric
 
 
 from ax.service.ax_client import AxClient, ObjectiveProperties
@@ -136,7 +136,7 @@ def experiment(args: argparse.Namespace) -> torch.float:
         wandb.login()
 
         wandb_run_name = f'TEXT_{args.cls_loss}_SW{int(args.score_weight)}_EW{int(args.emb_weight)}_B{args.batch}_LR{args.lr}'
-        
+
         if args.use_linear_scheduler == False:
             wandb_run_name = f'{wandb_run_name}_PCT{args.pct_cycle}'
         wandb_tag = []
@@ -391,7 +391,7 @@ def lr_range_test(it: int, train_loader: DataLoader,  val_loader: DataLoader, de
                   optimizer: torch.optim, lr_scheduler: torch.optim.lr_scheduler,
                   criterion: Dict[str, torch.nn.Module],
                   move_to_gpu: Callable, metric: Optional[Dict[str, Metric]] = None,
-                  run: Optional[wandb.run] = None,
+                  run: Optional[wandb.wandb_run.Run] = None,
                   use_ltn: bool = False
                   ) -> int:
     """ execute a step of one epoch

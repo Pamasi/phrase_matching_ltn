@@ -180,22 +180,7 @@ class PatentDataset(Dataset):
             padding='max_length', return_tensors="pt"
         )
         
-        
-        # prompt 
-        # prompt= f'{target_text} unrelated to:'
-        # unrelated_output = self.prior_model.generate(self.prior_tok.encode(prompt, return_tensors="pt"), max_length=30)[0]
-        
-        # unrelated_text = self.prior_tok.decode(unrelated_output, skip_special_tokens=True)
-        
-        # unrelated_text = " ".join(unrelated_text.split())       
-        
-        # neg_example = self.tokenizer(
-        #     unrelated_text,
-        #     max_length=self.max_len,
-        #     add_special_tokens=True, 
-        #     truncation=True, 
-        #     padding='max_length', return_tensors="pt"
-        # )       
+               
         anchor_data= {
             'ids': anchor['input_ids'],
             'mask':anchor['attention_mask'] 
