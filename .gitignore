@@ -1,0 +1,14 @@
+*.csv
+*pychace
+*.pdf
+.vscode*
+*.pyc
+prior_knowledge/*
+paper/*
+*.log
+*-run
+*.wandb
+*wandb*
+*/ckpt_*
+*.xml
+*.gif
