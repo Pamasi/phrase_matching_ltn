@@ -109,22 +109,12 @@ This is an example of how you may give instructions on setting up your project l
 <!-- USAGE EXAMPLES -->
 ## Usage
 
-1. Tranining
+1. Training
    ```sh
    python train.py
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
-<!-- ROADMAP -->
-## Roadmap
-
-- [X] Train the base model
-- [ ] Implemented Contrastive Learning for the base model
-- [X] Integration of logical constraints
-- [ ] Docker integration
 
 
 See the [open issues](https://github.com/Pamasi/phrase_matching_ltn/issues) for a full list of proposed features (and known issues).
